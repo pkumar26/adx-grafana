@@ -16,7 +16,7 @@
 - Q: Which IaC tool should be used for provisioning? → A: Bicep (Azure-native, first-class ARM integration, no state file to manage)
 - Q: Should the system alert on ingestion failures (dead-letter table rows)? → A: Yes — alert when any rows land in FileTransferEvents_Errors within an evaluation window
 - Q: How should the Environment dimension be populated for each file-transfer event? → A: Derive from ADX database name (e.g., database `ftevents_prod` → Environment = `prod`)
-- Q: What columns should the DailySummary materialized view contain? → A: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, P95AgeMinutes *(revised to AgeDigest in FR-036; P95 computed at query time via `percentile_tdigest()`)*, SlaAdherencePct
+- Q: What columns should the DailySummary materialized view contain? → A: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, P95AgeMinutes *(revised to AgeDigest in FR-036; P95 computed at query time via `percentile_tdigest()`)*, SlaAdherencePct *(revised: computed at query time via `round(100.0 * OkCount / TotalCount, 2)` — `round()` is unsupported in MV aggregations)*
 - Q: Where should the Timestamp column derivation happen? → A: Ingestion-time via ADX update policy (staging table → target table). Column is concrete and indexed; queries stay simple.
 - Q: Which dashboard hosts the SLA & Delay Metrics time-series panels (avg/p95 AgeMinutes)? → A: Operator Dashboard only. Business Dashboard retains its own SLA Adherence % stat panel.
 - Q: Which ingestion mode should the Python runbook use? → A: Queued ingestion (QueuedIngestClient) for both local files and blob URLs. Ingest URI always required. Matches production Event Grid pipeline.
@@ -323,9 +323,8 @@ As a **platform engineer** or **developer**, I need a Python runbook script that
   | DelayedCount      | long     | `countif(Status == "DELAYED")`                     |
   | AvgAgeMinutes     | real     | `avg(AgeMinutes)`                                    |
   | AgeDigest         | dynamic  | `tdigest(AgeMinutes)`                                |
-  | SlaAdherencePct   | real     | `round(100.0 * countif(Status == "OK") / count(), 2)` |
 
-  > **Note**: `percentile()` is not directly supported in ADX materialized view aggregations. P95AgeMinutes is computed at query time via `percentile_tdigest(AgeDigest, 95)`, not stored as a column. See data-model.md Entity 4 for details.
+  > **Note**: `percentile()` and `round()` are not supported in ADX materialized view aggregations. P95AgeMinutes and SlaAdherencePct are computed at query time — P95 via `percentile_tdigest(AgeDigest, 95)` and SLA% via `round(100.0 * OkCount / TotalCount, 2)`. See data-model.md Entity 4 for details.
 
   The materialized view MUST have a retention policy of 730 days (2 years) as specified in FR-004.
 
@@ -335,7 +334,7 @@ As a **platform engineer** or **developer**, I need a Python runbook script that
 
 - **FileTransferError**: A failed ingestion record using ADX's ingestion-failure schema: RawData (original raw text), Database, Table, FailedOn (datetime), Error (failure reason), OperationId (guid). Not a superset of FileTransferEvent — uses system columns. See FR-003 and data-model.md Entity 3. Used for debugging and operational triage.
 
-- **DailySummary** (materialized view): An aggregated daily roll-up of FileTransferEvents — one row per calendar day (UTC). Columns: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, AgeDigest (dynamic — t-digest sketch; P95 resolved at query time via `percentile_tdigest()`), SlaAdherencePct. Retained for 2 years (730 days). Used for long-term business reporting beyond the 90-day retention of raw events. Defined in FR-036.
+- **DailySummary** (materialized view): An aggregated daily roll-up of FileTransferEvents — one row per calendar day (UTC). Columns: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, AgeDigest (dynamic — t-digest sketch; P95 resolved at query time via `percentile_tdigest()`). SlaAdherencePct is computed at query time via `round(100.0 * OkCount / TotalCount, 2)` (not stored — `round()` is unsupported in MV aggregations). Retained for 2 years (730 days). Used for long-term business reporting beyond the 90-day retention of raw events. Defined in FR-036.
 
 ---
 

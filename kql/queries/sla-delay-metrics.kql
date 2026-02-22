@@ -1,0 +1,10 @@
+// SLA & Delay Metrics — avg and P95 AgeMinutes (FR-012, FR-019)
+// Panel Type: Time series (line chart) | Format as: Time series
+// Dashboard: Operator Dashboard — Panel 2
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| summarize
+    AvgAgeMinutes = avg(AgeMinutes),
+    P95AgeMinutes = percentile(AgeMinutes, 95)
+  by bin(Timestamp, $__interval)
+| order by Timestamp asc

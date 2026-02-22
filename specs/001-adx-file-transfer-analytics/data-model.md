@@ -208,17 +208,16 @@
 | DelayedCount | `long` | Events with Status = "DELAYED" | `countif(Status == "DELAYED")` |
 | AvgAgeMinutes | `real` | Average `AgeMinutes` for the day | `avg(AgeMinutes)` |
 | AgeDigest | `dynamic` | T-digest sketch for percentile computation | `tdigest(AgeMinutes)` |
-| SlaAdherencePct | `real` | `100.0 * OkCount / TotalCount`, rounded to 2 decimals | `round(100.0 * countif(Status == "OK") / count(), 2)` |
 
-> **P95AgeMinutes** is not stored as a column. It is computed at query time from the `AgeDigest` column:
+> **P95AgeMinutes** and **SlaAdherencePct** are not stored as columns. They are computed at query time:
 > ```kql
 > materialized_view("DailySummary")
+> | extend P95AgeMinutes = percentile_tdigest(AgeDigest, 95),
+>         SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)
 > | project Date, TotalCount, OkCount, MissingCount, DelayedCount,
->           AvgAgeMinutes,
->           P95AgeMinutes = percentile_tdigest(AgeDigest, 95),
->           SlaAdherencePct
+>          AvgAgeMinutes, P95AgeMinutes, SlaAdherencePct
 > ```
-> This is because `percentile()` is not directly supported in materialized view aggregations — `tdigest()` produces the sketch, and `percentile_tdigest()` resolves it at read time.
+> `percentile()` and `round()` are not supported in materialized view aggregations — `tdigest()` produces the sketch resolved at read time, and `SlaAdherencePct` is derived from the stored `OkCount`/`TotalCount` columns.
 
 **DDL**:
 ```kql
@@ -230,8 +229,8 @@
         MissingCount    = countif(Status == "MISSING"),
         DelayedCount    = countif(Status == "DELAYED"),
         AvgAgeMinutes   = avg(AgeMinutes),
-        AgeDigest       = tdigest(AgeMinutes),
-        SlaAdherencePct = round(100.0 * countif(Status == "OK") / count(), 2)
+        AgeDigest       = tdigest(AgeMinutes)
+        // SlaAdherencePct is computed at query time: round(100.0 * OkCount / TotalCount, 2)
     by Date = startofday(Timestamp)
 }
 ```

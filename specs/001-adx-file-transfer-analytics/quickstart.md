@@ -18,65 +18,106 @@
 
 ## Step 1: Deploy Infrastructure (Bicep)
 
+### Option A: Provision new resources
+
 ```bash
+# Get your Azure AD Object ID (grants Grafana Admin portal access)
+DEPLOYER_ID=$(az ad signed-in-user show --query id -o tsv)
+
 # Validate the deployment (dry run)
 az deployment group what-if \
   --resource-group rg-file-transfer-dev \
   --template-file infra/main.bicep \
-  --parameters infra/parameters/dev.bicepparam
+  --parameters infra/parameters/dev.bicepparam \
+  --parameters deployerPrincipalId="$DEPLOYER_ID"
 
 # Deploy
 az deployment group create \
   --resource-group rg-file-transfer-dev \
   --template-file infra/main.bicep \
-  --parameters infra/parameters/dev.bicepparam
+  --parameters infra/parameters/dev.bicepparam \
+  --parameters deployerPrincipalId="$DEPLOYER_ID"
 ```
 
-This provisions:
+This single command provisions the complete end-to-end pipeline:
 - ADX cluster (Dev/Test SKU) + database (`ftevents_dev`)
-- Storage account with `file-transfer-events` container
-- Managed Grafana instance
-- Event Grid data connection (Storage → ADX staging table)
-- Managed identity RBAC assignments
+- **ADX schema**: tables, mappings, policies, and materialized views (via Kusto database script)
+- Storage account with `file-transfer-events` container + lifecycle policy
+- Event Grid → Event Hub → ADX data connection (automatic blob ingestion)
+- Managed Grafana instance with **ADX data source** and **both dashboards** auto-imported
+- All RBAC: Grafana→ADX Viewer, ADX→Storage Blob Reader/Contributor, deployer Grafana Admin
 - Private endpoints (if enabled for the environment)
+
+> **`deployerPrincipalId`** is optional — omit it for CI/CD pipelines that don't need Grafana portal access.
+
+> **Runbook-only mode**: If you don't need automatic blob ingestion, add `--parameters enableEventGrid=false` to skip Event Hub + Event Grid provisioning. You can still ingest data via the Python runbook (Step 3 → "Via runbook").
+
+### Option B: Use existing ADX and/or Grafana
+
+If you already have an ADX cluster or Grafana instance, provide their resource details as override parameters. The deployment skips provisioning those resources and wires Event Grid, RBAC, and networking to your existing setup.
+
+```bash
+# Find your existing resource details
+az kusto cluster show --name <cluster> --resource-group <rg> \
+  --query "{id: id, uri: uri, principalId: identity.principalId}" -o json
+
+az grafana show --name <grafana> --resource-group <rg> \
+  --query "{id: id, principalId: identity.principalId, endpoint: properties.endpoint}" -o json
+```
+
+```bash
+# Deploy with existing ADX cluster
+DEPLOYER_ID=$(az ad signed-in-user show --query id -o tsv)
+az deployment group create \
+  --resource-group rg-file-transfer-dev \
+  --template-file infra/main.bicep \
+  --parameters infra/parameters/dev.bicepparam \
+  --parameters deployerPrincipalId="$DEPLOYER_ID" \
+  --parameters \
+    existingAdxClusterId='<resource-id>' \
+    existingAdxClusterUri='https://<name>.<region>.kusto.windows.net' \
+    existingAdxPrincipalId='<object-id>'
+```
+
+> **Note**: When using an existing ADX cluster, the database (`adxDatabaseName`) must already exist. The Bicep deployment will apply the schema to that database automatically via the Kusto database script.
 
 ---
 
-## Step 2: Apply ADX Schema
+## Step 2: ADX Schema (automatic)
 
-Use the Azure CLI Kusto extension or the runbook to execute schema commands:
+The Bicep deployment in Step 1 **automatically applies the full ADX schema** via a [Kusto database script](../../infra/modules/adx-schema.bicep) that loads all KQL files from `kql/schema/`. This includes:
+- Tables: `FileTransferEvents`, `FileTransferEvents_Raw`, `FileTransferEvents_Errors`
+- Transformation function + update policy
+- CSV and JSON ingestion mappings
+- Retention and batching policies
+- `DailySummary` materialized view
 
-```bash
-# Option A: Azure CLI
-az kusto script create \
-  --cluster-name adx-ft-dev \
-  --database-name ftevents_dev \
-  --resource-group rg-file-transfer-dev \
-  --name "initial-schema" \
-  --script-content "$(cat kql/schema/tables.kql)"
+All commands are idempotent — re-deploying the Bicep is safe.
 
-# Repeat for other schema files:
-# kql/schema/mappings.kql
-# kql/schema/policies.kql
-# kql/schema/materialized-views.kql
-```
-
-```bash
-# Option B: Python runbook (recommended for dev — creates full chain)
-cd runbook
-pip install -r requirements.txt
-python adx_runbook.py setup \
-  --cluster "https://adx-ft-dev.eastus2.kusto.windows.net" \
-  --database "ftevents_dev"
-```
-
-The runbook creates all tables, mappings, functions, update policy, retention policies, and the materialized view in the correct order (see [data-model.md](data-model.md) → DDL Execution Order).
+> **Manual alternative** (for troubleshooting or existing clusters managed outside Bicep):
+> ```bash
+> # Option A: Python runbook (recommended)
+> cd runbook
+> uv pip install -r requirements.txt
+> python3 adx_runbook.py setup \
+>   --cluster "https://adx-ft-dev.eastus2.kusto.windows.net" \
+>   --database "ftevents_dev"
+>
+> # Option B: Azure CLI (one script at a time)
+> az kusto script create \
+>   --cluster-name adx-ft-dev \
+>   --database-name ftevents_dev \
+>   --resource-group rg-file-transfer-dev \
+>   --name "initial-schema" \
+>   --script-content "$(cat kql/schema/tables.kql)"
+> # Repeat for mappings.kql, policies.kql, materialized-views.kql
+> ```
 
 ---
 
 ## Step 3: Ingest Sample Data
 
-### Via blob upload (Event Grid path):
+### Via blob upload (Event Grid path — requires `enableEventGrid=true`):
 
 ```bash
 # Upload sample CSV to the ingestion landing zone
@@ -94,12 +135,11 @@ az storage blob upload \
 
 ```bash
 # Local file ingestion
-python adx_runbook.py ingest-local \
+python3 adx_runbook.py ingest-local \
   --cluster "https://adx-ft-dev.eastus2.kusto.windows.net" \
+  --ingest-uri "https://ingest-adx-ft-dev.eastus2.kusto.windows.net" \
   --database "ftevents_dev" \
-  --file ../samples/sample-events.csv \
-  --format csv \
-  --mapping FileTransferEvents_CsvMapping
+  --file ../samples/sample-events.csv
 ```
 
 ---
@@ -135,29 +175,28 @@ az kusto query \
 
 ---
 
-## Step 5: Configure Grafana Dashboards
+## Step 5: Grafana Dashboards (automatic)
 
-1. **Open Managed Grafana**: Navigate to the Grafana instance in the Azure portal → click the endpoint URL.
+The Bicep deployment in Step 1 **automatically configures Grafana** via a [deployment script](../../infra/modules/grafana-config.bicep):
+- Creates an ADX data source with managed identity authentication
+- Imports both dashboards (`operator-dashboard.json` and `business-dashboard.json`) with the data source pre-configured
 
-2. **Add ADX data source**:
-   - Go to **Configuration → Data Sources → Add data source**
-   - Search for **Azure Data Explorer**
-   - Connection:
-     - Cluster URL: `https://adx-ft-dev.eastus2.kusto.windows.net`
-     - Database: `ftevents_dev`
-   - Authentication: **Managed Identity** (auto-configured for Azure Managed Grafana)
-   - Click **Save & Test** — should show "Success"
+Open the Grafana endpoint (from the deployment output `grafanaEndpoint`) and navigate to **Dashboards** — both "File Transfer Operations" and "File Transfer Business Analytics" will be ready.
 
-3. **Import dashboards**:
-   - Go to **Dashboards → Import**
-   - Upload `dashboards/operator-dashboard.json`
-   - Select the ADX data source created above
-   - Repeat for `dashboards/business-dashboard.json`
+### Configure Alerts (optional)
 
-4. **Configure alerts** (if not embedded in dashboard JSON):
-   - Navigate to **Alerting → Alert Rules**
-   - Create rules matching the contracts in [contracts/alert-queries.kql](contracts/alert-queries.kql)
-   - Set up notification contact points (email, Teams, etc.) and routing policies
+1. Navigate to **Alerting → Alert Rules**
+2. Create rules matching the contracts in [contracts/alert-queries.kql](contracts/alert-queries.kql)
+3. Set up notification contact points (email, Teams, etc.) and routing policies
+
+> **Manual data source + dashboard import** (for existing Grafana instances managed outside Bicep):
+> 1. Go to **Configuration → Data Sources → Add data source**
+> 2. Select **Azure Data Explorer**, set Cluster URL and Database, use **Managed Identity** auth
+> 3. Click **Save & Test** — should show "Success"
+> 4. Go to **Dashboards → Import** → upload `dashboards/operator-dashboard.json`, select the data source
+> 5. Repeat for `dashboards/business-dashboard.json`
+>
+> See [DATASOURCE.md](../../dashboards/DATASOURCE.md) for full details.
 
 ---
 

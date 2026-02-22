@@ -120,6 +120,7 @@ materialized_view("DailySummary")
 // Daily SLA adherence trend — from materialized view
 materialized_view("DailySummary")
 | where $__timeFilter(Date)
+| extend SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)
 | project Date, SlaAdherencePct
 | order by Date asc
 ```

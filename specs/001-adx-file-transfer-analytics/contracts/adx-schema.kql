@@ -146,8 +146,8 @@
         MissingCount    = countif(Status == "MISSING"),
         DelayedCount    = countif(Status == "DELAYED"),
         AvgAgeMinutes   = avg(AgeMinutes),
-        AgeDigest       = tdigest(AgeMinutes),
-        SlaAdherencePct = round(100.0 * countif(Status == "OK") / count(), 2)
+        AgeDigest       = tdigest(AgeMinutes)
+        // SlaAdherencePct is computed at query time: round(100.0 * OkCount / TotalCount, 2)
     by Date = startofday(Timestamp)
 }
 ```

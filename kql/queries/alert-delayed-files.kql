@@ -1,0 +1,9 @@
+// Delayed Files Alert (FR-038)
+// Alert Name: FileTransfer-DelayedFiles
+// Evaluation interval: 5 minutes | Lookback: 1 hour
+// Condition: DelayedCount > 5
+// Labels: alert_type=business, severity=warning
+FileTransferEvents
+| where Timestamp >= ago(1h)
+| where Status == "DELAYED"
+| summarize DelayedCount = count()

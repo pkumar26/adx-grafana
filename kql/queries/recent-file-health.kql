@@ -1,0 +1,9 @@
+// Recent File Health — latest status per file (FR-011, FR-019)
+// Panel Type: Table | Format as: Table
+// Dashboard: Operator Dashboard — Panel 1
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| summarize arg_max(Timestamp, *) by Filename
+| project Filename, Status, AgeMinutes, SourcePresent, TargetPresent,
+          SourceLastModifiedUtc, TargetLastModifiedUtc, Timestamp, Notes
+| order by Status asc, Filename asc

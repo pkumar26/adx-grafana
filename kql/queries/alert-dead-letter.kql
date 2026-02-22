@@ -1,0 +1,8 @@
+// Dead-Letter / Ingestion Errors Alert (FR-029)
+// Alert Name: FileTransfer-IngestionErrors
+// Evaluation interval: 5 minutes | Lookback: 10 minutes (2x eval interval)
+// Condition: ErrorCount > 0
+// Labels: alert_type=infrastructure, severity=critical
+FileTransferEvents_Errors
+| where FailedOn >= ago(10m)
+| summarize ErrorCount = count()

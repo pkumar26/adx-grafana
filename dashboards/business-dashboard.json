@@ -1,0 +1,332 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_AZURE_DATA_EXPLORER",
+      "label": "Azure Data Explorer",
+      "description": "ADX data source for file transfer events",
+      "type": "datasource",
+      "pluginId": "grafana-azure-data-explorer-datasource",
+      "pluginName": "Azure Data Explorer Datasource"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-azure-data-explorer-datasource",
+      "name": "Azure Data Explorer Datasource",
+      "version": "5.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "business-dashboard",
+  "title": "File Transfer Business Analytics",
+  "description": "Business analytics dashboard for daily volume, SLA adherence, and age trends using the DailySummary materialized view",
+  "tags": ["file-transfer", "business", "adx", "daily-summary"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1h",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Files per Day",
+      "description": "Daily file transfer volume by status from the DailySummary materialized view",
+      "type": "barchart",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "File Count",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "OkCount" },
+            "properties": [
+              { "id": "displayName", "value": "OK" },
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "MissingCount" },
+            "properties": [
+              { "id": "displayName", "value": "Missing" },
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "DelayedCount" },
+            "properties": [
+              { "id": "displayName", "value": "Delayed" },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "TotalCount" },
+            "properties": [
+              { "id": "custom.hideFrom", "value": { "legend": false, "tooltip": false, "viz": true } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] },
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "xTickLabelRotation": 0,
+        "showValue": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "materialized_view(\"DailySummary\")\n| where $__timeFilter(Date)\n| project Date, TotalCount, OkCount, MissingCount, DelayedCount\n| order by Date asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "SLA Adherence %",
+      "description": "Overall SLA adherence percentage for the selected time range",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 10 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["mean"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "materialized_view(\"DailySummary\")\n| where $__timeFilter(Date)\n| summarize OverallSla = round(100.0 * sum(OkCount) / sum(TotalCount), 2)\n| project OverallSla",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Daily SLA Trend",
+      "description": "SLA adherence percentage per day over the selected range",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "SLA %",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none", "group": "A" },
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "SlaAdherencePct" },
+            "properties": [
+              { "id": "displayName", "value": "SLA %" },
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "single", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "min"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "materialized_view(\"DailySummary\")\n| where $__timeFilter(Date)\n| extend SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)\n| project Date, SlaAdherencePct\n| order by Date asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Daily P95 Age Trend",
+      "description": "P95 file age per day (computed from t-digest sketch)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Minutes",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none", "group": "A" }
+          },
+          "unit": "m"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "P95AgeMinutes" },
+            "properties": [
+              { "id": "displayName", "value": "P95 Age" },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "single", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "materialized_view(\"DailySummary\")\n| where $__timeFilter(Date)\n| project Date, P95AgeMinutes = percentile_tdigest(AgeDigest, 95)\n| order by Date asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Average Age Trend",
+      "description": "Average file age per day",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Minutes",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none", "group": "A" }
+          },
+          "unit": "m"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "AvgAgeMinutes" },
+            "properties": [
+              { "id": "displayName", "value": "Avg Age" },
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "single", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "materialized_view(\"DailySummary\")\n| where $__timeFilter(Date)\n| project Date, AvgAgeMinutes\n| order by Date asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+Filename,SourcePresent,TargetPresent,SourceLastModifiedUtc,TargetLastModifiedUtc,AgeMinutes,Status,Notes
+partner-a/daily-report.csv,true,true,2026-02-21T06:00:00Z,2026-02-21T06:05:00Z,15.0,OK,Transferred successfully
+partner-a/hourly-feed.csv,true,true,2026-02-21T07:30:00Z,2026-02-21T07:32:00Z,5.2,OK,
+partner-b/inventory.csv,true,false,2026-02-21T05:00:00Z,,120.0,MISSING,Target file not found after 2 hours
+partner-b/sales-data.csv,true,true,2026-02-21T04:00:00Z,2026-02-21T04:45:00Z,180.5,DELAYED,Exceeded 60-minute SLA threshold
+partner-c/config-update.json,false,false,,,0,ERROR,Source system unreachable
+partner-c/daily-summary.csv,true,true,2026-02-21T08:00:00Z,2026-02-21T08:01:00Z,3.0,OK,
+partner-a/weekly-archive.zip,true,false,2026-02-20T23:00:00Z,,480.0,MISSING,Weekly archive not delivered
+partner-d/realtime-feed.csv,true,true,2026-02-21T09:00:00Z,2026-02-21T09:00:30Z,0.5,OK,Sub-minute transfer
+partner-d/analytics-export.csv,true,true,2026-02-21T08:30:00Z,2026-02-21T09:15:00Z,75.0,DELAYED,Slightly over SLA
+partner-b/null-source-test.csv,false,true,,2026-02-21T07:00:00Z,,ERROR,Source timestamp unavailable; Timestamp will use ingestion_time()

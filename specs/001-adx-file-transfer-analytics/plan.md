@@ -69,10 +69,12 @@ infra/
 ├── main.bicep                    # Orchestrator: deploys all modules
 ├── modules/
 │   ├── adx-cluster.bicep         # ADX cluster + database
+│   ├── adx-schema.bicep          # Kusto database script: tables, mappings, policies, views
 │   ├── grafana.bicep             # Managed Grafana instance
+│   ├── grafana-config.bicep      # Deployment script: ADX data source + dashboard import
 │   ├── storage.bicep             # ADLS Gen2 ingestion landing zone
 │   ├── event-grid.bicep          # Event Grid subscription → ADX data connection
-│   ├── identity.bicep            # Managed identities + RBAC role assignments
+│   ├── identity.bicep            # RBAC: Grafana→ADX, ADX→Storage, deployer Grafana Admin
 │   └── networking.bicep          # Private Link / Managed Private Endpoints
 └── parameters/
     ├── dev.bicepparam            # Dev environment parameters
