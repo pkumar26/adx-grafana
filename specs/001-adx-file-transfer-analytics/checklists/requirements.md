@@ -32,5 +32,7 @@
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
-- Assumptions section documents reasonable defaults for: Timestamp semantics, SLA threshold, status values, partner/system/environment dimensions, ingestion trigger pattern, alert routing, authentication, and retention periods.
+- Assumptions section documents reasonable defaults for: Timestamp semantics, SLA threshold, status values, partner/system/environment dimensions, ingestion trigger pattern, alert routing, authentication, retention periods, and Python runbook scope/version.
 - No [NEEDS CLARIFICATION] markers were needed — all ambiguities were resolved with documented assumptions.
+- **User Story 7 (Python runbook)** intentionally names Python, `azure-kusto-data`, and `azure-kusto-ingest` because the story is specifically about a developer tooling script. These are not leaked implementation details of the core analytics system — they are the *purpose* of that user story.
+- Updated 2026-02-21: Added US-7 (6 acceptance scenarios), FR-030–FR-035, SC-011, 2 edge cases, and 2 assumptions for Python runbook support.

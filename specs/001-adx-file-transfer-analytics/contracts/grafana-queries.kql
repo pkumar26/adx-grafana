@@ -1,0 +1,174 @@
+# Grafana Panel Queries
+
+> KQL queries for all Grafana dashboard panels. Each query includes the required
+> `$__timeFilter(Timestamp)` macro and adaptive `$__interval` binning.
+
+**Branch**: `001-adx-file-transfer-analytics` | **Spec FRs**: FR-011–FR-015, FR-019–FR-021, FR-036
+
+---
+
+## Operator Dashboard Panels
+
+### Panel 1: Recent File Health (FR-011, FR-019)
+
+**Type**: Table  
+**Format as**: Table  
+**Description**: Displays the latest status of each monitored file in the selected time window.
+
+```kql
+// Recent File Health — latest status per file
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| summarize arg_max(Timestamp, *) by Filename
+| project Filename, Status, AgeMinutes, SourcePresent, TargetPresent,
+          SourceLastModifiedUtc, TargetLastModifiedUtc, Timestamp, Notes
+| order by Status asc, Filename asc
+```
+
+### Panel 2: SLA & Delay Metrics (FR-012, FR-019)
+
+**Type**: Time series (line chart)  
+**Format as**: Time series  
+**Description**: Average and P95 file age over time, with adaptive binning.
+
+```kql
+// SLA & Delay Metrics — avg and P95 AgeMinutes
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| summarize
+    AvgAgeMinutes = avg(AgeMinutes),
+    P95AgeMinutes = percentile(AgeMinutes, 95)
+  by bin(Timestamp, $__interval)
+| order by Timestamp asc
+```
+
+### Panel 3: Missing & Failed Counts (FR-013, FR-019)
+
+**Type**: Time series (bar chart)  
+**Format as**: Time series  
+**Description**: Count of MISSING and ERROR events per time bin.
+
+```kql
+// Missing & Failed Counts
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| where Status in ("MISSING", "ERROR")
+| summarize
+    MissingCount = countif(Status == "MISSING"),
+    ErrorCount   = countif(Status == "ERROR")
+  by bin(Timestamp, $__interval)
+| order by Timestamp asc
+```
+
+### Panel 4: SLA Adherence Rate (FR-012, FR-019)
+
+**Type**: Stat panel  
+**Format as**: Table  
+**Description**: Percentage of OK events in the selected time window.
+
+```kql
+// SLA Adherence — single value
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| summarize
+    TotalCount = count(),
+    OkCount    = countif(Status == "OK")
+| extend SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)
+| project SlaAdherencePct
+```
+
+### Panel 5: Ingestion Errors (FR-029, FR-019)
+
+**Type**: Table  
+**Format as**: Table  
+**Description**: Recent dead-letter rows from the errors table. Shows raw data and failure reason.
+
+```kql
+// Dead-letter / ingestion errors
+FileTransferEvents_Errors
+| where $__timeFilter(FailedOn)
+| project FailedOn, Error, RawData, OperationId
+| order by FailedOn desc
+| take 100
+```
+
+---
+
+## Business Analytics Dashboard Panels
+
+### Panel 6: Volume & Business KPIs (FR-014, FR-020)
+
+**Type**: Time series (multi-line)  
+**Format as**: Time series  
+**Description**: Daily totals by status over a 30-day window. Uses the materialized view for performance.
+
+```kql
+// Daily volume by status — from materialized view
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, TotalCount, OkCount, MissingCount, DelayedCount
+| order by Date asc
+```
+
+### Panel 7: Daily SLA Adherence Trend (FR-036, FR-020)
+
+**Type**: Time series (line chart)  
+**Format as**: Time series  
+**Description**: SLA adherence percentage per day over 30 days.
+
+```kql
+// Daily SLA adherence trend — from materialized view
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, SlaAdherencePct
+| order by Date asc
+```
+
+### Panel 8: Daily P95 Age Trend (FR-036, FR-020)
+
+**Type**: Time series (line chart)  
+**Format as**: Time series  
+**Description**: P95 file age per day, computed from the t-digest sketch.
+
+```kql
+// Daily P95 age trend — from materialized view (tdigest)
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, P95AgeMinutes = percentile_tdigest(AgeDigest, 95)
+| order by Date asc
+```
+
+### Panel 9: Average Age Trend (FR-036, FR-020)
+
+**Type**: Time series (line chart)  
+**Format as**: Time series  
+**Description**: Average file age per day.
+
+```kql
+// Daily average age trend — from materialized view
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, AvgAgeMinutes
+| order by Date asc
+```
+
+---
+
+## Query Contract Summary
+
+| # | Panel | Dashboard | Query Source | FR | Format |
+|---|-------|-----------|-------------|-----|--------|
+| 1 | Recent File Health | Operator | `FileTransferEvents` | FR-011 | Table |
+| 2 | SLA & Delay Metrics | Operator | `FileTransferEvents` | FR-012 | Time series |
+| 3 | Missing & Failed Counts | Operator | `FileTransferEvents` | FR-013 | Time series |
+| 4 | SLA Adherence Rate | Operator | `FileTransferEvents` | FR-012 | Stat |
+| 5 | Ingestion Errors | Operator | `FileTransferEvents_Errors` | FR-029 | Table |
+| 6 | Volume & Business KPIs | Business | `DailySummary` (MV) | FR-014 | Time series |
+| 7 | Daily SLA Trend | Business | `DailySummary` (MV) | FR-036 | Time series |
+| 8 | Daily P95 Age Trend | Business | `DailySummary` (MV) | FR-036 | Time series |
+| 9 | Average Age Trend | Business | `DailySummary` (MV) | FR-036 | Time series |
+
+**All queries guarantee**:
+- `$__timeFilter()` used on every query (FR-015)
+- Server-side aggregation via `summarize` / `bin()` — no client-side processing
+- ≤1,000 result rows (SC-004) via time-bounded scans and `take` limits

@@ -16,6 +16,11 @@
 - Q: Which IaC tool should be used for provisioning? → A: Bicep (Azure-native, first-class ARM integration, no state file to manage)
 - Q: Should the system alert on ingestion failures (dead-letter table rows)? → A: Yes — alert when any rows land in FileTransferEvents_Errors within an evaluation window
 - Q: How should the Environment dimension be populated for each file-transfer event? → A: Derive from ADX database name (e.g., database `ftevents_prod` → Environment = `prod`)
+- Q: What columns should the DailySummary materialized view contain? → A: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, P95AgeMinutes *(revised to AgeDigest in FR-036; P95 computed at query time via `percentile_tdigest()`)*, SlaAdherencePct
+- Q: Where should the Timestamp column derivation happen? → A: Ingestion-time via ADX update policy (staging table → target table). Column is concrete and indexed; queries stay simple.
+- Q: Which dashboard hosts the SLA & Delay Metrics time-series panels (avg/p95 AgeMinutes)? → A: Operator Dashboard only. Business Dashboard retains its own SLA Adherence % stat panel.
+- Q: Which ingestion mode should the Python runbook use? → A: Queued ingestion (QueuedIngestClient) for both local files and blob URLs. Ingest URI always required. Matches production Event Grid pipeline.
+- Q: Should the runbook create the staging table and update policy, or only the final target table? → A: Full chain — staging table (FileTransferEvents_Raw), update policy, target table, and mappings. Ingest into staging table for true production parity.
 
 ---
 
@@ -55,7 +60,7 @@ As an **operations engineer**, I need a Grafana dashboard that shows me the curr
 
 ---
 
-### User Story 3 — SLA and delay metrics dashboard (Priority: P3)
+### User Story 3 — SLA and delay metrics panels (Priority: P3)
 
 As an **operations engineer**, I need time-series charts showing average and p95 file-transfer age over time, broken down by status, so I can spot emerging delay trends before they breach SLAs.
 
@@ -120,6 +125,25 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 
 ---
 
+### User Story 7 — Python runbook for manual setup and testing (Priority: P7)
+
+As a **platform engineer** or **developer**, I need a Python runbook script that can create the ADX table and ingestion mappings, ingest a local or Azure Storage CSV/JSON file, and run a verification KQL query — so that I can manually set up, validate, and test the ADX schema and ingestion without depending on the full IaC pipeline or Event Grid automation.
+
+**Why this priority**: The runbook is a developer-facing utility that accelerates inner-loop testing and environment bootstrapping. It is not user-facing and does not block dashboards or alerts, but it significantly reduces friction when iterating on schema changes, testing ingestion mappings, or onboarding new team members.
+
+**Independent Test**: From a developer workstation with Python 3.9+ and the `azure-kusto-data` / `azure-kusto-ingest` packages installed, run the runbook against a dev ADX cluster. Verify that: (a) the table and mappings are created if absent, (b) a sample CSV file is ingested, (c) a verification query returns the ingested rows with correct types, and (d) the script exits with a clear success/failure message.
+
+**Acceptance Scenarios**:
+
+1. **Given** a developer has Python 3.9+, `azure-kusto-data`, and `azure-kusto-ingest` installed, **When** they run the runbook with `--cluster-uri`, `--database`, and `--file` arguments using interactive login, **Then** the script authenticates, creates the table/mappings if needed, ingests the file, and prints verification query results.
+2. **Given** the `FileTransferEvents` table already exists in the target database, **When** the runbook runs with the create-table step, **Then** it detects the existing table and skips creation without error (idempotent).
+3. **Given** a sample CSV file matching the production schema, **When** ingested via the runbook, **Then** the resulting rows in ADX are identical in schema and types to rows ingested via the Event Grid pipeline (FR-001, FR-006).
+4. **Given** a sample JSON file, **When** ingested via the runbook with the JSON mapping, **Then** the resulting rows match the same schema as CSV-ingested rows (FR-007).
+5. **Given** the `--auth-method` parameter is set to `managed-identity`, **When** the runbook runs in an Azure VM or container with a configured managed identity, **Then** it authenticates without any interactive prompt and completes all steps.
+6. **Given** the `--auth-method` parameter is set to `service-principal`, **When** the runbook is provided with `--client-id`, `--client-secret`, and `--tenant-id` (or environment variables), **Then** it authenticates non-interactively and completes all steps.
+
+---
+
 ### Edge Cases
 
 - **Empty file**: A CSV/JSON file with headers but zero data rows lands in the ingestion path. The system must not error; it should complete ingestion with zero rows added.
@@ -129,6 +153,8 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 - **Null TargetLastModifiedUtc for MISSING files**: By definition, MISSING files have no target timestamp. The schema must accommodate nullable datetime, and queries must handle this gracefully (no divide-by-zero, no null-propagation errors).
 - **Schema evolution**: A new column is added to the source CSV (e.g., `Partner`). Ingestion must not break for files with the old schema; new columns should be addable via `.alter table` without data loss.
 - **ADX cluster unavailable**: During an ADX maintenance window or outage, file delivery continues. Files must queue in the storage account and be ingested when ADX recovers (at-least-once delivery).
+- **Runbook against empty database**: The runbook is run against a database with no existing tables or mappings. It must create all required objects from scratch without error.
+- **Runbook re-run (idempotency)**: The runbook is run twice in succession. The second run must not fail or duplicate schema objects; table/mapping creation must be idempotent.
 
 ---
 
@@ -152,9 +178,22 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
   | Notes                   | string     | Human-readable context for the event                 |
   | Timestamp               | datetime   | Primary event time used for all time-based queries   |
 
-- **FR-002**: The `Timestamp` column MUST be derived as follows: use `SourceLastModifiedUtc` as the primary event timestamp. If `SourceLastModifiedUtc` is null, fall back to the ingestion time (`ingestion_time()`).
+- **FR-002**: The `Timestamp` column MUST be derived at ingestion time, not query time. The derivation rule is: use `SourceLastModifiedUtc` as the primary event timestamp; if `SourceLastModifiedUtc` is null, fall back to the ingestion time (`ingestion_time()`). This MUST be implemented via an ADX update policy that transforms rows from a staging table into the `FileTransferEvents` target table with the `Timestamp` column populated. The resulting `Timestamp` column is a concrete, indexed value — no query-time `coalesce()` is required. See FR-037 for staging table mechanics.
 
-- **FR-003**: The system MUST define a `FileTransferEvents_Errors` dead-letter table with the same columns as `FileTransferEvents` plus an `Error` (string) column and a `RawPayload` (string) column containing the original unparsed row.
+- **FR-037**: The system MUST define a `FileTransferEvents_Raw` staging table with the same columns as `FileTransferEvents` except `Timestamp`. An ADX update policy on `FileTransferEvents` MUST transform rows from the staging table by computing `Timestamp` per the derivation rule in FR-002 and inserting completed rows into the target table. Ingestion mappings (FR-006, FR-007) and the Event Grid data connection (FR-008) MUST point to the staging table, not the target table directly. See FR-002 for the Timestamp derivation rule.
+
+- **FR-003**: The system MUST define a `FileTransferEvents_Errors` dead-letter table that captures rows failing ingestion mapping validation. This table uses ADX's ingestion-failure schema (not the `FileTransferEvents` schema):
+
+  | Column       | Type     | Purpose                                            |
+  |--------------|----------|----------------------------------------------------||
+  | RawData      | string   | Original raw text of the failed row                |
+  | Database     | string   | Database name where ingestion was attempted        |
+  | Table        | string   | Target table name (`FileTransferEvents_Raw`)       |
+  | FailedOn     | datetime | When the failure occurred                          |
+  | Error        | string   | Error message describing the failure               |
+  | OperationId  | guid     | Correlation ID for the ingestion operation         |
+
+  See data-model.md Entity 3 for DDL and error routing details.
 
 - **FR-004**: ADX retention policy for `FileTransferEvents` MUST be set to 90 days at full resolution in production, and 30 days in non-production environments. A separate long-term aggregated materialized view (daily summaries) SHOULD be retained for 2 years.
 
@@ -178,7 +217,7 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 
 - **FR-012**: The system MUST provide an "SLA & Delay Metrics" KQL query that uses `bin(Timestamp, $__interval)` and `summarize` to compute `avg(AgeMinutes)` and `percentile(AgeMinutes, 95)` per time bucket, with optional breakdown by Status.
 
-- **FR-013**: The system MUST provide a "Missing/Failed Files Count" KQL query that uses `bin(Timestamp, $__interval)` and `summarize` with `countif()` to return `MissingCount`, `OkCount`, and `DelayedCount` per time bucket — suitable for both visualization and alerting.
+- **FR-013**: The system MUST provide a "Missing/Failed Files Count" KQL query that uses `bin(Timestamp, $__interval)` and `summarize` with `countif()` to return `MissingCount` and `ErrorCount` per time bucket, filtered to anomalous statuses (`MISSING`, `ERROR`) — suitable for both visualization and alerting. A broader breakdown including `OkCount` and `DelayedCount` is available via FR-014 (Volume KPIs) and the DailySummary materialized view.
 
 - **FR-014**: The system MUST provide "Volume & Business KPIs" KQL queries that aggregate file counts per day, filterable by partner, system, and environment dimensions where those dimensions exist in the data.
 
@@ -199,8 +238,12 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
   - A "Current Issues" table panel (MISSING and DELAYED only).
   - A stat panel showing "Files Processed (last 24h)".
   - A stat panel showing "Missing Files (last 24h)".
-  - A time-series panel for avg/p95 AgeMinutes over time.
+  - A time-series panel for avg/p95 AgeMinutes over time (SLA & Delay Metrics from US-3).
   - A time-series panel for Missing/OK/Delayed counts over time.
+
+  The SLA & Delay Metrics panels (US-3) are hosted exclusively on the Operator Dashboard. The Business Analytics Dashboard (FR-020) provides a separate, complementary "SLA Adherence %" stat for business reporting.
+
+  > **Implementation note**: The "Current Issues" table is a filtered variant of "Recent File Transfers" (Panel 1 with `Status in ("MISSING", "DELAYED")`). The "Files Processed" and "Missing Files" stat panels use `count()` / `countif()` single-value queries. These are lightweight derived panels that share query patterns with Panel 1 and Panel 3 rather than requiring separate contract queries.
 
 - **FR-020**: The system MUST provide a "Business Analytics Dashboard" containing at minimum:
   - A "Files per Day" bar chart.
@@ -213,11 +256,15 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 
 - **FR-022**: The system MUST define a Grafana alert rule that fires when the count of MISSING-status files in the last evaluation period exceeds a configurable threshold.
 
-- **FR-023**: Alert notifications MUST include labels for environment, file type, and source system to enable routing to the correct on-call team.
+- **FR-023**: Alert notifications MUST include labels for environment, file type, and source system to enable routing to the correct on-call team. Note: the `partner` label required by Constitution Principle V is deferred until the Partner column is added to the schema (see Assumption 4). Alert labels initially include `alert_type`, `severity`, and `environment`.
 
 - **FR-024**: Infrastructure alerts (ADX cluster health, ingestion failures) MUST be kept separate from business/SLA alerts but visible within the same Grafana workspace.
 
 - **FR-029**: The system MUST define a Grafana alert rule that fires when **any** rows appear in the `FileTransferEvents_Errors` dead-letter table within an evaluation window. This alert MUST be classified as an infrastructure alert (separate from business/SLA alerts per FR-024) and MUST include labels for environment and error type.
+
+- **FR-038**: The system MUST define a Grafana alert rule that fires when the count of DELAYED-status files in the last evaluation period exceeds a configurable threshold (default: 5). This addresses Constitution Principle V's requirement for alerts on "late files exceeding SLA thresholds." Alert labels MUST include `alert_type` (`business`), `severity` (`warning`), and `environment`. See contracts/alert-queries.kql Alert 3.
+
+  > **Volume anomaly alert deferral (Constitution Principle V)**: Principle V also requires alerts for "abnormal volume patterns (spikes or drops)." This is explicitly deferred from v1: anomaly detection requires historical baseline computation (e.g., current volume vs. 7-day rolling average) which is non-trivial at <1,000 events/day where natural variance is high. The `DailySummary` materialized view (FR-036) provides the foundation; a volume anomaly alert will be added as a follow-up by comparing daily counts against a rolling baseline. This is an explicit constitutional exception, not a silent omission.
 
 #### Infrastructure & Governance
 
@@ -229,13 +276,66 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 
 - **FR-028**: All changes to schema, ingestion mappings, KQL queries, or dashboards MUST be submitted via pull request with at least one peer review.
 
+#### Tooling & Python Runbook
+
+- **FR-030**: The repository MUST include a Python runbook script that uses the official Azure Data Explorer Python libraries (`azure-kusto-data` for queries and management commands, `azure-kusto-ingest` for ingestion).
+
+- **FR-031**: The runbook MUST accept the following configuration parameters (via CLI arguments, environment variables, or a combination):
+
+  | Parameter       | Required | Purpose                                                    |
+  |-----------------|----------|------------------------------------------------------------|
+  | Cluster URI     | Yes      | ADX cluster endpoint (e.g., `https://<cluster>.<region>.kusto.windows.net`) |
+  | Ingest URI      | Yes      | ADX ingestion endpoint (e.g., `https://ingest-<cluster>.<region>.kusto.windows.net`). Always required — the runbook uses queued ingestion for both local and blob sources. |
+  | Database name   | Yes      | Target ADX database                                        |
+  | Table name      | No       | Defaults to `FileTransferEvents`                           |
+  | Mapping name    | No       | Defaults to `FileTransferEvents_CsvMapping` or `_JsonMapping` based on file type |
+  | File path / URL | Yes      | Local file path or Azure Blob Storage URL to ingest        |
+  | Auth method     | No       | `interactive` (default), `managed-identity`, or `service-principal` |
+
+- **FR-032**: The runbook MUST support the following operations, executable individually via sub-commands or as a single end-to-end flow:
+  1. **Authenticate** to ADX using the configured auth method.
+  2. **Create tables** — Create the staging table (`FileTransferEvents_Raw` per FR-037) and the target table (`FileTransferEvents` per FR-001) if they do not exist. Creation MUST be idempotent (`.create-merge table`).
+  3. **Create update policy** — Create the ADX update policy on `FileTransferEvents` that transforms rows from the staging table by computing `Timestamp` per FR-002. Creation MUST be idempotent.
+  4. **Create mappings** — Create CSV and JSON ingestion mappings on the staging table if they do not exist, matching FR-006 and FR-007. Creation MUST be idempotent.
+  5. **Ingest file** — Ingest a sample CSV or JSON file from a local path or Azure Storage blob URL into the **staging table** (`FileTransferEvents_Raw`) using the appropriate mapping. Ingestion MUST use queued ingestion (`QueuedIngestClient`) for both local files and blob URLs, matching the same queued ingestion path used by the production Event Grid pipeline. Local files are uploaded to a transient blob by the SDK before queuing. The update policy then moves rows into the target table with `Timestamp` populated.
+  6. **Verify** — Run a KQL query against the target `FileTransferEvents` table that retrieves the most recently ingested rows, confirms column names and types match the production schema (including a non-null `Timestamp`), and prints results to stdout.
+
+- **FR-033**: The runbook MUST support interactive browser-based login (Azure CLI device-code flow or `InteractiveBrowserCredential`) as the default auth method for local developer use. It MUST also accept `managed-identity` and `service-principal` auth methods via a parameter switch, so that the same script can be reused in CI/CD or automation contexts without code changes.
+
+- **FR-034**: The full ADX object chain created by the runbook — staging table (`FileTransferEvents_Raw`), update policy, target table (`FileTransferEvents`), and ingestion mappings — MUST be identical to those used by the production Event Grid ingestion pipeline (FR-001, FR-002, FR-006, FR-007, FR-037). Data ingested via the runbook MUST flow through the staging table and update policy, producing rows in the target table that are indistinguishable from data ingested via the automated pipeline.
+
+- **FR-035**: The runbook MUST include inline usage documentation (e.g., `--help` output) and a companion README section covering:
+  - Python version requirement (3.9+).
+  - Required pip packages (`azure-kusto-data`, `azure-kusto-ingest`, `azure-identity`).
+  - Configuration instructions for each auth method.
+  - Example invocations for CSV ingestion, JSON ingestion, and verification-only mode.
+
+#### Materialized Views
+
+- **FR-036**: The system MUST define a `DailySummary` materialized view over `FileTransferEvents` that aggregates to one row per calendar day (UTC) with the following columns:
+
+  | Column            | Type     | Derivation                                           |
+  |-------------------|----------|------------------------------------------------------|
+  | Date              | datetime | `startofday(Timestamp)`                              |
+  | TotalCount        | long     | `count()`                                            |
+  | OkCount           | long     | `countif(Status == "OK")`                           |
+  | MissingCount      | long     | `countif(Status == "MISSING")`                     |
+  | DelayedCount      | long     | `countif(Status == "DELAYED")`                     |
+  | AvgAgeMinutes     | real     | `avg(AgeMinutes)`                                    |
+  | AgeDigest         | dynamic  | `tdigest(AgeMinutes)`                                |
+  | SlaAdherencePct   | real     | `round(100.0 * countif(Status == "OK") / count(), 2)` |
+
+  > **Note**: `percentile()` is not directly supported in ADX materialized view aggregations. P95AgeMinutes is computed at query time via `percentile_tdigest(AgeDigest, 95)`, not stored as a column. See data-model.md Entity 4 for details.
+
+  The materialized view MUST have a retention policy of 730 days (2 years) as specified in FR-004.
+
 ### Key Entities
 
 - **FileTransferEvent**: A single record representing the health status of one file at one point in time. Key attributes: Filename, SourcePresent, TargetPresent, SourceLastModifiedUtc, TargetLastModifiedUtc, AgeMinutes, Status, Notes, Timestamp. This is an append-only, immutable event.
 
-- **FileTransferError**: A failed ingestion record. Same attributes as FileTransferEvent plus Error (reason for failure) and RawPayload (original unparsed content). Used for debugging and operational triage.
+- **FileTransferError**: A failed ingestion record using ADX's ingestion-failure schema: RawData (original raw text), Database, Table, FailedOn (datetime), Error (failure reason), OperationId (guid). Not a superset of FileTransferEvent — uses system columns. See FR-003 and data-model.md Entity 3. Used for debugging and operational triage.
 
-- **DailySummary** (materialized view): An aggregated daily roll-up of FileTransferEvents — counts by status, average/p95 AgeMinutes, SLA adherence percentage. Used for long-term business reporting beyond the 90-day retention of raw events.
+- **DailySummary** (materialized view): An aggregated daily roll-up of FileTransferEvents — one row per calendar day (UTC). Columns: Date, TotalCount, OkCount, MissingCount, DelayedCount, AvgAgeMinutes, AgeDigest (dynamic — t-digest sketch; P95 resolved at query time via `percentile_tdigest()`), SlaAdherencePct. Retained for 2 years (730 days). Used for long-term business reporting beyond the 90-day retention of raw events. Defined in FR-036.
 
 ---
 
@@ -253,12 +353,13 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 - **SC-008**: Business users can produce an SLA adherence report for any 30-day period using dashboard filters alone, without writing KQL.
 - **SC-009**: A new environment (dev/test/prod) can be provisioned from Bicep templates in under 30 minutes with no manual configuration steps beyond parameter input.
 - **SC-010**: All schema, query, and dashboard artifacts are version-controlled; no production change bypasses the PR review process.
+- **SC-011**: A developer can run the Python runbook end-to-end (authenticate, create table/mappings, ingest a sample file, and verify results) in under 5 minutes on a workstation with Python and the required packages pre-installed.
 
 ---
 
 ## Assumptions
 
-- **Timestamp semantics**: `Timestamp` = `SourceLastModifiedUtc` (with fallback to ingestion time if null). This aligns with the constitution's requirement for a single, explicit event timestamp.
+- **Timestamp semantics**: `Timestamp` = `SourceLastModifiedUtc` (with fallback to ingestion time if null). Derived at ingestion time via an ADX update policy on a staging table (`FileTransferEvents_Raw` → `FileTransferEvents`). This aligns with the constitution's requirement for a single, explicit event timestamp and keeps all downstream queries and materialized views operating on a concrete, indexed column.
 - **SLA threshold**: The default SLA for file transfers is assumed to be 15 minutes (AgeMinutes ≤ 15 = within SLA). This is a configurable parameter, not hard-coded.
 - **Status values**: The system assumes three primary status values — `OK`, `MISSING`, `DELAYED` — plus an optional `ERROR` for ingestion-time failures. Additional statuses may be added via schema evolution.
 - **Partner/System/Environment dimensions**: The initial schema does not include Partner, System, or Environment columns. Environment is derived from the ADX database name (each environment has its own database per FR-026), so no `Environment` column is needed in the table schema. Partner and System columns can be added later via `.alter table` and updated ingestion mappings as a non-breaking change. Dashboard variables are designed to support Partner and System dimensions when present.
@@ -267,3 +368,5 @@ As a **platform engineer**, I need the ADX cluster/database, Managed Grafana ins
 - **Authentication**: All Grafana-to-ADX connectivity uses Azure Managed Identity. No service principal secrets or API keys are used.
 - **Daily volume**: Under 1,000 file-transfer events per day in production (small, single-system monitoring). This informs ADX SKU sizing (Dev/Test SKU sufficient initially), ingestion batching defaults, and confirms that the 1,000-row Grafana panel limit is comfortable for raw table views within a 24-hour window.
 - **Retention**: 90 days full-resolution in production, 30 days in non-production, 2 years for daily aggregated summaries. These can be adjusted per organizational policy.
+- **Python runbook scope**: The runbook is a developer/ops utility for manual setup and ad-hoc testing. It is not part of the production ingestion pipeline (which uses Event Grid + ADX native data connections). The runbook shares the same table schema and mappings as production to ensure parity.
+- **Python version**: The runbook targets Python 3.9+ for compatibility with current `azure-kusto-data` and `azure-kusto-ingest` SDK versions. No other runtime dependencies beyond standard pip packages are assumed.
