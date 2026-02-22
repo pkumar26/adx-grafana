@@ -178,6 +178,8 @@ python adx_runbook.py verify \
 |-------|-----------|
 | `ModuleNotFoundError: azure.kusto` | Run `pip install -r requirements.txt` |
 | Auth failure with interactive | Run `az login` first, or try `--auth-method managed-identity` on Azure |
-| No rows after ingest | Wait 1-3 minutes for queued ingestion + update policy, then run `verify` |
+| No rows after ingest | Wait 1-3 minutes for queued ingestion + update policy, then run `verify`. If still empty, check `.show ingestion failures` in ADX — see below |
+| "Ingestion queued ✓" but verify shows no rows | `QueuedIngestClient` is fire-and-forget — "queued" does not mean success. Run `.show ingestion failures \| where FailedOn > ago(10m)` in ADX. Common cause: ADX MI lacks Storage Blob Data Reader on the storage account |
+| "Access to persistent storage path was denied" | The ADX cluster MI needs **Storage Blob Data Reader** + **Contributor** on the storage account. The Bicep `identity.bicep` assigns these automatically. If missing, assign manually — see [README FAQ](../README.md#ingestion-says-queued--but-no-data-appears) |
 | Mapping errors | Ensure your file matches the expected schema (8 columns for CSV) |
 | Timeout errors | Check cluster URI — use the query endpoint for `setup`/`verify`, ingest endpoint for ingestion |

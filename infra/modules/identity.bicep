@@ -1,6 +1,6 @@
 // Identity and RBAC Bicep Module
 // Assigns managed identity roles: Grafana→ADX Viewer, ADX→Storage Blob Reader,
-// Event Grid roles, and optionally Grafana Admin for the deployer.
+// Event Grid roles, deployer→Storage Blob Contributor, and optionally Grafana Admin for the deployer.
 
 @description('Principal ID of the Grafana system-assigned managed identity')
 param grafanaPrincipalId string
@@ -19,6 +19,9 @@ param adxDatabaseName string
 
 @description('Resource ID of the storage account')
 param storageAccountId string
+
+@description('Name of the storage account')
+param storageAccountName string
 
 @description('Name of the Managed Grafana instance (for deployer role assignment)')
 param grafanaName string
@@ -47,12 +50,18 @@ resource grafanaAdxViewer 'Microsoft.Kusto/clusters/databases/principalAssignmen
   }
 }
 
-// --- Storage RBAC Role Assignments ---
+// --- Reference existing storage account for scoped role assignments ---
 
-// ADX → Storage Blob Data Reader (for Event Grid ingestion)
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageAccountName
+}
+
+// --- Storage RBAC Role Assignments (scoped to storage account) ---
+
+// ADX → Storage Blob Data Reader (for Event Grid ingestion — ADX reads blobs)
 resource adxStorageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccountId, adxClusterId, storageBlobDataReaderRoleId)
-  scope: resourceGroup()
+  scope: storageAccount
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
     principalId: adxClusterPrincipalId
@@ -63,11 +72,22 @@ resource adxStorageBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-0
 // ADX → Storage Blob Data Contributor (for queued ingestion SDK uploads)
 resource adxStorageBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccountId, adxClusterId, storageBlobDataContributorRoleId)
-  scope: resourceGroup()
+  scope: storageAccount
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
     principalId: adxClusterPrincipalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Deployer → Storage Blob Data Contributor (for uploading blobs to trigger Event Grid)
+resource deployerStorageBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
+  name: guid(storageAccountId, deployerPrincipalId, storageBlobDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: deployerPrincipalId
+    principalType: 'User'
   }
 }
 

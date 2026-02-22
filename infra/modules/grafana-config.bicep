@@ -15,6 +15,9 @@ param adxDatabaseName string
 @description('Azure region')
 param location string
 
+@description('Name of the storage account to use for deployment script execution (avoids auto-provisioned storage that may be blocked by Azure Policy)')
+param storageAccountName string
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -28,9 +31,17 @@ var configVersion = uniqueString(operatorDashboard, businessDashboard, adxCluste
 // Grafana Admin role definition ID
 var grafanaAdminRoleId = '22926164-76b3-42b3-bc55-97df8dab3e41'
 
+// Built-in role: Storage Blob Data Contributor (for deployment script MI → storage account)
+var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+
 // Reference the Grafana instance (must already exist via grafana module or pre-existing)
 resource grafana 'Microsoft.Dashboard/grafana@2023-09-01' existing = {
   name: grafanaName
+}
+
+// Reference the storage account used for deployment script execution
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageAccountName
 }
 
 // User-assigned managed identity for the deployment script
@@ -46,6 +57,17 @@ resource scriptGrafanaAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01'
   scope: grafana
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', grafanaAdminRoleId)
+    principalId: scriptIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant Storage Blob Data Contributor to the script identity (required for MI-based deployment script storage)
+resource scriptStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, scriptIdentity.id, storageBlobDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
     principalId: scriptIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -69,6 +91,9 @@ resource configScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     timeout: 'PT10M'
     cleanupPreference: 'OnSuccess'
     forceUpdateTag: configVersion
+    storageAccountSettings: {
+      storageAccountName: storageAccountName
+    }
     environmentVariables: [
       { name: 'GRAFANA_NAME', value: grafanaName }
       { name: 'ADX_CLUSTER_URI', value: adxClusterUri }
@@ -160,6 +185,7 @@ PYEOF
   }
   dependsOn: [
     scriptGrafanaAdmin
+    scriptStorageRole
   ]
 }
 

@@ -1,7 +1,8 @@
 using '../main.bicep'
 
 // Test environment parameters
-// Deploy: az deployment group create -g rg-file-transfer-test --template-file infra/main.bicep --parameters infra/parameters/test.bicepparam
+// Deploy:  ./deploy.sh test
+// Manual:  az group create -n rg-file-transfer-test -l eastus2 && az deployment group create -g rg-file-transfer-test --template-file infra/main.bicep --parameters infra/parameters/test.bicepparam
 
 param environmentName = 'test'
 param location = 'eastus2'

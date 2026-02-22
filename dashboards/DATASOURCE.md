@@ -7,13 +7,14 @@ Azure Data Explorer (ADX) data source plugin, which is pre-installed in Azure
 Managed Grafana. Authentication uses the Grafana instance's system-assigned
 managed identity — no secrets or API keys are needed.
 
-**Automatic setup**: The Bicep deployment (`infra/main.bicep`) automatically
-provisions the ADX data source, imports both dashboards, and configures all RBAC
-via the [`grafana-config.bicep`](../infra/modules/grafana-config.bicep) deployment
-script. No manual steps are needed for a fresh deployment.
+**Automatic setup**: The `deploy.sh` script automatically provisions the ADX
+data source, imports both dashboards, and configures all RBAC as a
+post-deployment step. No manual steps are needed when using `./deploy.sh`.
 
-The sections below are for **manual setup** (e.g., existing Grafana instances
-managed outside Bicep, re-importing dashboards, or troubleshooting).
+If you deploy via `az deployment group create` directly (without `deploy.sh`),
+Grafana is provisioned but **not configured** — you must create the data source
+and import dashboards manually. See the [README Quick Start](../README.md#5-configure-grafana-dashboards)
+for CLI commands, or follow the manual steps below.
 
 ## Manual Setup Steps
 
@@ -89,9 +90,11 @@ az deployment group create \
 
 The deployment will automatically:
 - Assign RBAC (Grafana → ADX Viewer, deployer Grafana Admin)
-- Create the ADX data source with managed identity auth
-- Import both dashboards with the data source pre-configured
 - Configure private endpoints (if enabled)
+
+After Bicep completes, configure Grafana using the CLI commands in the
+[README Quick Start](../README.md#5-configure-grafana-dashboards), or use
+`./deploy.sh` which handles this automatically.
 
 ## Data Source Settings Reference
 
@@ -111,5 +114,6 @@ The deployment will automatically:
 | "No data" in panels | Check time range, verify data exists via ADX Web Explorer |
 | Data source not found on import | Create the ADX data source before importing dashboards |
 | Wrong environment data | Verify the data source points to the correct database |
-| Deployment script fails with 401 | RBAC propagation takes 1-5 min; re-run the Bicep deployment |
-| Dashboards missing after deploy | Check Grafana endpoint, or re-deploy — the script is idempotent |
+| Deployment script fails with 401 | RBAC propagation takes 1-5 min; wait and re-run `./deploy.sh` |
+| Dashboards missing after deploy | If you used `az deployment group create` directly, run the post-deploy Grafana config — see [README](../README.md#5-configure-grafana-dashboards) |
+| Panels show data but Event Grid blobs don't ingest | ADX MI needs Storage Blob Data Reader on the storage account — check `.show ingestion failures` in ADX. See [README FAQ](../README.md#ingestion-says-queued--but-no-data-appears) |

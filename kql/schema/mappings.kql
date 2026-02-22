@@ -5,27 +5,8 @@
 // =============================================================================
 
 // Step 6: CSV Ingestion Mapping
-.create-or-alter table FileTransferEvents_Raw ingestion csv mapping 'FileTransferEvents_CsvMapping'
-'[
-    {"Name": "Filename",              "DataType": "string",   "Ordinal": 0},
-    {"Name": "SourcePresent",          "DataType": "bool",     "Ordinal": 1},
-    {"Name": "TargetPresent",          "DataType": "bool",     "Ordinal": 2},
-    {"Name": "SourceLastModifiedUtc",  "DataType": "datetime", "Ordinal": 3},
-    {"Name": "TargetLastModifiedUtc",  "DataType": "datetime", "Ordinal": 4},
-    {"Name": "AgeMinutes",             "DataType": "real",     "Ordinal": 5},
-    {"Name": "Status",                 "DataType": "string",   "Ordinal": 6},
-    {"Name": "Notes",                  "DataType": "string",   "Ordinal": 7}
-]'
+// NOTE: Mapping JSON must be on a single line for Kusto database script compatibility.
+.create-or-alter table FileTransferEvents_Raw ingestion csv mapping 'FileTransferEvents_CsvMapping' '[{"Name":"Filename","DataType":"string","Ordinal":0},{"Name":"SourcePresent","DataType":"bool","Ordinal":1},{"Name":"TargetPresent","DataType":"bool","Ordinal":2},{"Name":"SourceLastModifiedUtc","DataType":"datetime","Ordinal":3},{"Name":"TargetLastModifiedUtc","DataType":"datetime","Ordinal":4},{"Name":"AgeMinutes","DataType":"real","Ordinal":5},{"Name":"Status","DataType":"string","Ordinal":6},{"Name":"Notes","DataType":"string","Ordinal":7}]'
 
 // Step 7: JSON Ingestion Mapping
-.create-or-alter table FileTransferEvents_Raw ingestion json mapping 'FileTransferEvents_JsonMapping'
-'[
-    {"column": "Filename",              "path": "$.Filename",              "datatype": "string"},
-    {"column": "SourcePresent",          "path": "$.SourcePresent",          "datatype": "bool"},
-    {"column": "TargetPresent",          "path": "$.TargetPresent",          "datatype": "bool"},
-    {"column": "SourceLastModifiedUtc",  "path": "$.SourceLastModifiedUtc",  "datatype": "datetime"},
-    {"column": "TargetLastModifiedUtc",  "path": "$.TargetLastModifiedUtc",  "datatype": "datetime"},
-    {"column": "AgeMinutes",             "path": "$.AgeMinutes",             "datatype": "real"},
-    {"column": "Status",                 "path": "$.Status",                 "datatype": "string"},
-    {"column": "Notes",                  "path": "$.Notes",                  "datatype": "string"}
-]'
+.create-or-alter table FileTransferEvents_Raw ingestion json mapping 'FileTransferEvents_JsonMapping' '[{"column":"Filename","path":"$.Filename","datatype":"string"},{"column":"SourcePresent","path":"$.SourcePresent","datatype":"bool"},{"column":"TargetPresent","path":"$.TargetPresent","datatype":"bool"},{"column":"SourceLastModifiedUtc","path":"$.SourceLastModifiedUtc","datatype":"datetime"},{"column":"TargetLastModifiedUtc","path":"$.TargetLastModifiedUtc","datatype":"datetime"},{"column":"AgeMinutes","path":"$.AgeMinutes","datatype":"real"},{"column":"Status","path":"$.Status","datatype":"string"},{"column":"Notes","path":"$.Notes","datatype":"string"}]'

@@ -64,6 +64,7 @@ All inter-service communication uses **managed identity (MI) authentication** �
 ## Directory Layout
 
 ```
+deploy.sh                       # Interactive deployment script (recommended entry point)
 infra/                          # Bicep IaC
 ├── main.bicep                  # Orchestrator
 ├── modules/                    # Resource modules
@@ -71,7 +72,7 @@ infra/                          # Bicep IaC
 │   ├── adx-schema.bicep        #   Kusto script: tables, mappings, policies, views
 │   ├── event-grid.bicep        #   Event Hub + Event Grid + ADX data connection
 │   ├── grafana.bicep            #   Managed Grafana instance
-│   ├── grafana-config.bicep    #   Deployment script: ADX data source + dashboards
+│   ├── grafana-config.bicep    #   (unused — Grafana config now in deploy.sh)
 │   ├── identity.bicep           #   RBAC: Grafana→ADX, ADX→Storage, deployer roles
 │   ├── networking.bicep         #   Private Link / Managed Private Endpoints
 │   └── storage.bicep            #   ADLS Gen2 storage account + container
@@ -100,9 +101,33 @@ samples/                        # Test data
 
 ### 1. Deploy Infrastructure
 
-**New resources (default):**
+**Recommended — interactive script:**
 
 ```bash
+./deploy.sh
+```
+
+The script will:
+- Check prerequisites (Azure CLI, login status)
+- Prompt for environment (dev/test/prod)
+- Let you **create a new resource group** or **use an existing one**
+- Resolve your deployer identity for Grafana Admin access
+- Run the Bicep deployment
+
+You can also pass arguments for non-interactive use:
+
+```bash
+./deploy.sh dev                # Prompt for resource group only
+./deploy.sh dev my-rg          # Fully non-interactive
+RESOURCE_GROUP=my-rg ./deploy.sh dev   # Via environment variable
+```
+
+**Manual deployment (advanced):**
+
+```bash
+# Create resource group (if it doesn't exist)
+az group create --name rg-file-transfer-dev --location eastus2
+
 # Get your Azure AD Object ID (grants Grafana Admin portal access)
 DEPLOYER_ID=$(az ad signed-in-user show --query id -o tsv)
 
@@ -113,13 +138,15 @@ az deployment group create \
   --parameters deployerPrincipalId="$DEPLOYER_ID"
 ```
 
-This single command provisions everything end-to-end:
+The Bicep deployment provisions **infrastructure and RBAC**:
 - ADX cluster + database
 - **ADX schema** (tables, mappings, policies, materialized views via Kusto database script)
 - Storage account with blob container + lifecycle policy
 - Event Grid → Event Hub → ADX data connection (automatic blob ingestion)
-- Managed Grafana instance with **ADX data source** and **both dashboards** auto-imported
+- Managed Grafana instance (provisioned, but **not yet configured** with data source/dashboards)
 - All RBAC: Grafana→ADX Viewer, ADX→Storage Blob Reader/Contributor, Grafana Admin for deployer
+
+> **Important**: The manual `az deployment group create` command only deploys infrastructure. You must **configure Grafana separately** (data source + dashboard import) as a post-deployment step. See [Step 5: Configure Grafana Dashboards](#5-configure-grafana-dashboards) below. If you use `./deploy.sh` instead, this is handled automatically.
 
 > **`deployerPrincipalId`** is optional — omit it for CI/CD pipelines that don't need portal access.
 
@@ -195,17 +222,60 @@ python adx_runbook.py verify \
   --database ftevents_dev
 ```
 
-### 5. View Dashboards (automatic)
+### 5. Configure Grafana Dashboards
 
-The Bicep deployment automatically:
-- Creates an ADX data source in Grafana (managed identity auth)
-- Imports both dashboards with the data source pre-configured
+If you used `./deploy.sh`, the data source and dashboards are already configured — skip to viewing.
 
-Open the Grafana endpoint (from deployment output `grafanaEndpoint`) and navigate to **Dashboards** — both "File Transfer Operations" and "File Transfer Business Analytics" will be ready.
+If you deployed manually via `az deployment group create`, run these post-deployment commands to configure Grafana:
+
+```bash
+# Install the Managed Grafana CLI extension
+az extension add --name amg --yes
+
+# Get deployment outputs
+GRAFANA_NAME=$(az deployment group show \
+  --resource-group <rg> --name main \
+  --query "properties.outputs.grafanaName.value" -o tsv)
+ADX_URI=$(az deployment group show \
+  --resource-group <rg> --name main \
+  --query "properties.outputs.adxClusterUri.value" -o tsv)
+ADX_DB=$(az deployment group show \
+  --resource-group <rg> --name main \
+  --query "properties.outputs.adxDatabaseName.value" -o tsv)
+
+# Create ADX data source in Grafana (managed identity auth)
+DS_UID=$(az grafana data-source create --name "$GRAFANA_NAME" --definition '{
+  "name": "Azure Data Explorer - '"$ADX_DB"'",
+  "type": "grafana-azure-data-explorer-datasource",
+  "access": "proxy",
+  "jsonData": {
+    "azureCredentials": {"authType": "msi"},
+    "clusterUrl": "'"$ADX_URI"'",
+    "defaultDatabase": "'"$ADX_DB"'"
+  }
+}' --query uid -o tsv)
+
+# Prepare and import dashboards (replace data source placeholder with actual UID)
+for DASH in dashboards/operator-dashboard.json dashboards/business-dashboard.json; do
+  python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    dash = json.load(f)
+raw = json.dumps(dash).replace('\${DS_AZURE_DATA_EXPLORER}', sys.argv[2])
+dash = json.loads(raw)
+dash.pop('__inputs', None); dash.pop('__requires', None)
+with open('/tmp/gf-import.json', 'w') as f:
+    json.dump({'dashboard': dash, 'overwrite': True}, f)
+" "$DASH" "$DS_UID"
+  az grafana dashboard create --name "$GRAFANA_NAME" --definition @/tmp/gf-import.json --overwrite
+done
+```
+
+Then open the Grafana endpoint (from deployment output `grafanaEndpoint`) and navigate to **Dashboards** — both "File Transfer Operations" and "File Transfer Business Analytics" will be ready.
 
 > **Time range**: Dashboards default to "Last 1 hour". If your data has older timestamps, adjust the time picker (top-right) to a wider range (e.g., "Last 7 days" or a custom range) to see all data.
 
-> **Manual import** (for existing Grafana or re-import): See [DATASOURCE.md](dashboards/DATASOURCE.md).
+> **Manual UI import** (for existing Grafana or re-import): See [DATASOURCE.md](dashboards/DATASOURCE.md).
 
 For the full walkthrough, see [quickstart.md](specs/001-adx-file-transfer-analytics/quickstart.md).
 
@@ -256,11 +326,13 @@ az grafana show \
 
 | Scenario | ADX Module | ADX Schema | Grafana Module | Grafana Config | Event Grid / Event Hub | Storage / RBAC / Networking |
 |----------|-----------|------------|----------------|----------------|------------------------|-----------------------------|
-| All new (default) | Provisions cluster + DB | Applied via Kusto script | Provisions Grafana | Data source + dashboards | Provisioned | Provisioned as normal |
-| Existing ADX | **Skipped** | Applied to existing DB | Provisions Grafana | Data source + dashboards | Provisioned | Wired to existing ADX cluster |
-| Existing Grafana | Provisions cluster + DB | Applied via Kusto script | **Skipped** | Data source + dashboards | Provisioned | Wired to existing Grafana MI |
-| Both existing | **Skipped** | Applied to existing DB | **Skipped** | Data source + dashboards | Provisioned | Wired to both existing resources |
+| All new (default) | Provisions cluster + DB | Applied via Kusto script | Provisions Grafana | deploy.sh: data source + dashboards | Provisioned | Provisioned as normal |
+| Existing ADX | **Skipped** | Applied to existing DB | Provisions Grafana | deploy.sh: data source + dashboards | Provisioned | Wired to existing ADX cluster |
+| Existing Grafana | Provisions cluster + DB | Applied via Kusto script | **Skipped** | deploy.sh: data source + dashboards | Provisioned | Wired to existing Grafana MI |
+| Both existing | **Skipped** | Applied to existing DB | **Skipped** | deploy.sh: data source + dashboards | Provisioned | Wired to both existing resources |
 | `enableEventGrid=false` | (per above) | (per above) | (per above) | (per above) | **Skipped** | Provisioned (no auto-ingestion) |
+
+> **Note**: The "Grafana Config" column refers to the post-deployment step handled by `deploy.sh`. If you deploy via `az deployment group create` directly, you must configure Grafana manually — see [Step 5: Configure Grafana Dashboards](#5-configure-grafana-dashboards).
 
 > **Note**: When using an existing ADX cluster, the database specified by `adxDatabaseName` must already exist on that cluster. The Bicep deployment will apply the schema (tables, mappings, policies) to that database automatically via a Kusto database script. You can also use the [runbook](runbook/README.md) `setup` command for manual schema management.
 
@@ -318,6 +390,24 @@ Nothing changes in ADX. Once data is ingested, ADX stores it independently as an
 
 No — the Event Grid subscription has `subjectEndsWith: ''`, which means **any** file uploaded to the `file-transfer-events` container triggers ingestion. There is no file-extension filter. The ADX data connection uses the configured ingestion mapping to parse the file content.
 
+### Ingestion says "queued ✓" but no data appears
+
+`QueuedIngestClient` is **fire-and-forget** — it queues the ingestion request and returns immediately, even if ADX lacks permission to read the source blob. A "queued ✓" message does **not** confirm data landed.
+
+To diagnose:
+
+1. **Check ingestion failures** — run this in the notebook verify cell or ADX Web Explorer:
+   ```kql
+   .show ingestion failures | where FailedOn > ago(30m)
+   ```
+2. **Common cause — Storage RBAC**: The ADX cluster's managed identity needs **Storage Blob Data Reader** and **Storage Blob Data Contributor** on the storage account. The Bicep `identity.bicep` module assigns these automatically, scoped to the storage account. If you see "Access to persistent storage path was denied" in the failure details, the RBAC assignment is missing or hasn't propagated yet (allow 1–5 minutes).
+3. **Verify RBAC**:
+   ```bash
+   ADX_MI=$(az kusto cluster show -n adx-ft-dev -g <rg> --query identity.principalId -o tsv)
+   az role assignment list --scope $(az storage account show -n stfteventsdev -g <rg> --query id -o tsv) \
+     --assignee "$ADX_MI" -o table
+   ```
+
 ### My Event Hub has `disableLocalAuth=true` — will the pipeline work?
 
 Yes. The Bicep deployment configures MI-based delivery throughout. Event Grid uses `deliveryWithResourceIdentity` (system-assigned MI with **Event Hubs Data Sender** role) instead of SAS keys. ADX uses `managedIdentityResourceId` on the data connection (with **Event Hubs Data Receiver** role). No SAS keys or connection strings are used anywhere.
@@ -343,6 +433,23 @@ Each environment is fully isolated — separate ADX database, Storage container,
 ### Can I use this with an existing ADX cluster or Grafana?
 
 Yes. Pass `existingAdxClusterId`, `existingAdxClusterUri`, and `existingAdxPrincipalId` to reuse an existing ADX cluster. Pass `existingGrafanaId`, `existingGrafanaPrincipalId`, and `existingGrafanaEndpoint` for Grafana. See [Using Existing Resources](#using-existing-resources) for details.
+
+### I deleted the resource group and redeployed — will I hit RBAC issues?
+
+No. Each fresh deployment provisions new managed identities and assigns RBAC scoped to the specific storage account (not the resource group). The previous session's RBAC bug was caused by role assignments scoped to the resource group and referencing a stale managed identity from a prior deployment — this is now fixed in `identity.bicep`.
+
+**One caveat**: Azure AD RBAC propagation is eventually consistent (1–5 minutes). If you upload a blob immediately after deployment completes, the first ingestion might fail transiently. Wait a few minutes, or use the notebook's verify cell (which checks `.show ingestion failures`) to confirm readiness.
+
+### The deployer can't upload blobs to Storage
+
+The Bicep deployment grants the deployer **Storage Blob Data Contributor** on the storage account (when `deployerPrincipalId` is provided). If you deployed manually without `deployerPrincipalId`, assign it:
+
+```bash
+DEPLOYER_ID=$(az ad signed-in-user show --query id -o tsv)
+STORAGE_ID=$(az storage account show -n stfteventsdev -g <rg> --query id -o tsv)
+az role assignment create --assignee "$DEPLOYER_ID" \
+  --role "Storage Blob Data Contributor" --scope "$STORAGE_ID"
+```
 
 ## Documentation
 

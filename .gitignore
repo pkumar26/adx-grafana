@@ -7,8 +7,8 @@ venv/
 *.egg-info/
 dist/
 
-# Bicep ARM outputs
-infra/**/*.generated.json
+# Bicep ARM outputs (compiled JSON from az bicep build)
+infra/**/*.json
 
 # IDE files
 .vscode/
