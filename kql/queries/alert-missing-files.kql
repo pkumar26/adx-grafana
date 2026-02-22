@@ -1,0 +1,9 @@
+// Missing Files Alert (FR-022)
+// Alert Name: FileTransfer-MissingFiles
+// Evaluation interval: 5 minutes | Lookback: 1 hour
+// Condition: MissingCount > 3
+// Labels: alert_type=business, severity=warning
+FileTransferEvents
+| where Timestamp >= ago(1h)
+| where Status == "MISSING"
+| summarize MissingCount = count()

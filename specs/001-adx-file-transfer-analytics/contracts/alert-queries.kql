@@ -1,0 +1,125 @@
+# Alert Rule Queries
+
+> KQL queries backing Grafana alert rules. Each alert is evaluated every 5 minutes.
+> Labels enable routing in Grafana's notification policy tree.
+
+**Branch**: `001-adx-file-transfer-analytics` | **Spec FRs**: FR-022–FR-024, FR-029, FR-038
+
+---
+
+## Alert 1: Missing Files (FR-022)
+
+**Name**: `FileTransfer-MissingFiles`  
+**Evaluation interval**: 5 minutes  
+**For duration**: 0 s (fire immediately when condition is met)  
+**Condition**: Count of MISSING status events in the last 1 hour exceeds threshold (default: 3)
+
+**Labels**:
+| Label | Value |
+|-------|-------|
+| `alert_type` | `business` |
+| `severity` | `warning` |
+| `environment` | (derived from Grafana data source / ADX database name) |
+
+**Query**:
+```kql
+FileTransferEvents
+| where Timestamp >= ago(1h)
+| where Status == "MISSING"
+| summarize MissingCount = count()
+```
+
+**Grafana condition**: `WHEN last() OF query IS ABOVE 3`
+
+**Auto-resolve**: Yes — resolves when MissingCount ≤ 3 on the next evaluation cycle.
+
+**Annotations**:
+- Summary: `{{ $value }} MISSING file events detected in the last hour`
+- Description: `Alert fires when more than 3 files are reported as MISSING within a 1-hour window. Check the Operator Dashboard for details.`
+
+---
+
+## Alert 2: Dead-Letter / Ingestion Errors (FR-029)
+
+**Name**: `FileTransfer-IngestionErrors`  
+**Evaluation interval**: 5 minutes  
+**For duration**: 0 s (fire immediately when any error is detected)  
+**Condition**: Any rows in the errors table within the last evaluation window
+
+**Labels**:
+| Label | Value |
+|-------|-------|
+| `alert_type` | `infrastructure` |
+| `severity` | `critical` |
+| `environment` | (derived from Grafana data source / ADX database name) |
+
+**Query**:
+```kql
+FileTransferEvents_Errors
+| where FailedOn >= ago(10m)
+| summarize ErrorCount = count()
+```
+
+> Uses a 10-minute lookback (2× evaluation interval) to avoid missing errors that occurred between evaluation cycles.
+
+**Grafana condition**: `WHEN last() OF query IS ABOVE 0`
+
+**Auto-resolve**: Yes — resolves when ErrorCount = 0 on the next evaluation cycle.
+
+**Annotations**:
+- Summary: `{{ $value }} ingestion error(s) detected in the last 10 minutes`
+- Description: `Malformed rows failed ingestion mapping validation and were routed to the dead-letter table. Check FileTransferEvents_Errors for details.`
+
+---
+
+## Alert 3: Delayed Files (FR-038)
+
+**Name**: `FileTransfer-DelayedFiles`  
+**Evaluation interval**: 5 minutes  
+**For duration**: 0 s (fire immediately when condition is met)  
+**Condition**: Count of DELAYED status events in the last 1 hour exceeds threshold (default: 5)
+
+**Labels**:
+| Label | Value |
+|-------|-------|
+| `alert_type` | `business` |
+| `severity` | `warning` |
+| `environment` | (derived from Grafana data source / ADX database name) |
+
+**Query**:
+```kql
+FileTransferEvents
+| where Timestamp >= ago(1h)
+| where Status == "DELAYED"
+| summarize DelayedCount = count()
+```
+
+**Grafana condition**: `WHEN last() OF query IS ABOVE 5`
+
+**Auto-resolve**: Yes — resolves when DelayedCount ≤ 5 on the next evaluation cycle.
+
+**Annotations**:
+- Summary: `{{ $value }} DELAYED file events detected in the last hour`
+- Description: `Alert fires when more than 5 files are reported as DELAYED (exceeding SLA threshold) within a 1-hour window. Check the Operator Dashboard for details.`
+
+---
+
+## Alert Routing Contract (FR-023, FR-024)
+
+Alerts are classified by labels for notification policy routing:
+
+| Label | Purpose | Values |
+|-------|---------|--------|
+| `alert_type` | Separates business from infrastructure alerts | `business`, `infrastructure` |
+| `severity` | Urgency level | `critical`, `warning`, `info` |
+| `environment` | Target environment | `dev`, `test`, `prod` |
+
+**Routing rules** (configured in Grafana notification policies):
+
+| alert_type | severity | Recommended routing |
+|------------|----------|-------------------|
+| `infrastructure` | `critical` | Immediate: Teams channel + email |
+| `business` | `warning` | Standard: Email notification |
+| `*` | `info` | Low-priority: Email digest or suppress |
+
+> **Note**: Specific contact point configuration (email addresses, Teams webhook URLs) is out of scope per the spec. The alert rules define the labels; routing configuration is environment-specific.

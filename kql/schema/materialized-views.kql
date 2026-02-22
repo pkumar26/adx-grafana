@@ -1,0 +1,25 @@
+// =============================================================================
+// ADX Materialized View — DailySummary
+// Pre-aggregated daily metrics for the Business Analytics dashboard.
+// Retained for 730 days (2 years) independently of the source table.
+// Execute after tables.kql and policies.kql (after update policy is in place).
+// =============================================================================
+
+// Step 12: Materialized View
+// Uses tdigest(AgeMinutes) for P95 computation at query time via percentile_tdigest().
+// SlaAdherencePct is computed at query time: round(100.0 * OkCount / TotalCount, 2)
+.create ifnotexists materialized-view DailySummary on table FileTransferEvents {
+    FileTransferEvents
+    | summarize
+        TotalCount      = count(),
+        OkCount         = countif(Status == "OK"),
+        MissingCount    = countif(Status == "MISSING"),
+        DelayedCount    = countif(Status == "DELAYED"),
+        AvgAgeMinutes   = avg(AgeMinutes),
+        AgeDigest       = tdigest(AgeMinutes)
+    by Date = startofday(Timestamp)
+}
+
+// Step 13: Materialized View Retention — 730 days
+.alter materialized-view DailySummary policy retention
+@'{"SoftDeletePeriod": "730.00:00:00", "Recoverability": "Enabled"}'

@@ -1,0 +1,102 @@
+[
+  {
+    "Filename": "partner-a/daily-report.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T06:00:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T06:05:00Z",
+    "AgeMinutes": 15.0,
+    "Status": "OK",
+    "Notes": "Transferred successfully"
+  },
+  {
+    "Filename": "partner-a/hourly-feed.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T07:30:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T07:32:00Z",
+    "AgeMinutes": 5.2,
+    "Status": "OK",
+    "Notes": null
+  },
+  {
+    "Filename": "partner-b/inventory.csv",
+    "SourcePresent": true,
+    "TargetPresent": false,
+    "SourceLastModifiedUtc": "2026-02-21T05:00:00Z",
+    "TargetLastModifiedUtc": null,
+    "AgeMinutes": 120.0,
+    "Status": "MISSING",
+    "Notes": "Target file not found after 2 hours"
+  },
+  {
+    "Filename": "partner-b/sales-data.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T04:00:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T04:45:00Z",
+    "AgeMinutes": 180.5,
+    "Status": "DELAYED",
+    "Notes": "Exceeded 60-minute SLA threshold"
+  },
+  {
+    "Filename": "partner-c/config-update.json",
+    "SourcePresent": false,
+    "TargetPresent": false,
+    "SourceLastModifiedUtc": null,
+    "TargetLastModifiedUtc": null,
+    "AgeMinutes": null,
+    "Status": "ERROR",
+    "Notes": "Source system unreachable"
+  },
+  {
+    "Filename": "partner-c/daily-summary.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T08:00:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T08:01:00Z",
+    "AgeMinutes": 3.0,
+    "Status": "OK",
+    "Notes": null
+  },
+  {
+    "Filename": "partner-a/weekly-archive.zip",
+    "SourcePresent": true,
+    "TargetPresent": false,
+    "SourceLastModifiedUtc": "2026-02-20T23:00:00Z",
+    "TargetLastModifiedUtc": null,
+    "AgeMinutes": 480.0,
+    "Status": "MISSING",
+    "Notes": "Weekly archive not delivered"
+  },
+  {
+    "Filename": "partner-d/realtime-feed.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T09:00:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T09:00:30Z",
+    "AgeMinutes": 0.5,
+    "Status": "OK",
+    "Notes": "Sub-minute transfer"
+  },
+  {
+    "Filename": "partner-d/analytics-export.csv",
+    "SourcePresent": true,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": "2026-02-21T08:30:00Z",
+    "TargetLastModifiedUtc": "2026-02-21T09:15:00Z",
+    "AgeMinutes": 75.0,
+    "Status": "DELAYED",
+    "Notes": "Slightly over SLA"
+  },
+  {
+    "Filename": "partner-b/null-source-test.csv",
+    "SourcePresent": false,
+    "TargetPresent": true,
+    "SourceLastModifiedUtc": null,
+    "TargetLastModifiedUtc": "2026-02-21T07:00:00Z",
+    "AgeMinutes": null,
+    "Status": "ERROR",
+    "Notes": "Source timestamp unavailable; Timestamp will use ingestion_time()"
+  }
+]

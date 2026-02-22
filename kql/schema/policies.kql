@@ -1,0 +1,38 @@
+// =============================================================================
+// ADX Policies — File Transfer Analytics
+// Transformation function, update policy, retention policies, batching policy.
+// Execute after tables.kql (Steps 1–3).
+// =============================================================================
+
+// Step 4: Transformation Function
+// Derives Timestamp from SourceLastModifiedUtc with ingestion_time() fallback.
+.create-or-alter function FileTransferEvents_Transform() {
+    FileTransferEvents_Raw
+    | extend Timestamp = coalesce(SourceLastModifiedUtc, ingestion_time())
+    | project Filename, SourcePresent, TargetPresent,
+              SourceLastModifiedUtc, TargetLastModifiedUtc,
+              AgeMinutes, Status, Notes, Timestamp
+}
+
+// Step 5: Update Policy on Target Table
+// Consumes rows from staging table via the transformation function.
+// IsTransactional: true — rollback staging extent if transformation fails.
+// PropagateIngestionProperties: true — preserves ingestion_time() accuracy.
+.alter table FileTransferEvents policy update
+@'[{"IsEnabled": true, "Source": "FileTransferEvents_Raw", "Query": "FileTransferEvents_Transform()", "IsTransactional": true, "PropagateIngestionProperties": true}]'
+
+// Step 8: Target Table Retention — 90 days (prod); adjust per environment
+.alter table FileTransferEvents policy retention
+@'{"SoftDeletePeriod": "90.00:00:00", "Recoverability": "Enabled"}'
+
+// Step 9: Staging Table Retention — 1 day (data is redundant after update policy)
+.alter table FileTransferEvents_Raw policy retention
+@'{"SoftDeletePeriod": "1.00:00:00", "Recoverability": "Disabled"}'
+
+// Step 10: Dead-Letter Table Retention — 30 days (all environments)
+.alter table FileTransferEvents_Errors policy retention
+@'{"SoftDeletePeriod": "30.00:00:00", "Recoverability": "Disabled"}'
+
+// Step 11: Ingestion Batching Policy — 1-minute window for <5 min E2E latency
+.alter table FileTransferEvents_Raw policy ingestionbatching
+@'{"MaximumBatchingTimeSpan": "00:01:00", "MaximumNumberOfItems": 20, "MaximumRawDataSizeMB": 256}'

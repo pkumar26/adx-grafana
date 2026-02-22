@@ -1,0 +1,575 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_AZURE_DATA_EXPLORER",
+      "label": "Azure Data Explorer",
+      "description": "ADX data source for file transfer events",
+      "type": "datasource",
+      "pluginId": "grafana-azure-data-explorer-datasource",
+      "pluginName": "Azure Data Explorer Datasource"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-azure-data-explorer-datasource",
+      "name": "Azure Data Explorer Datasource",
+      "version": "5.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "operator-dashboard",
+  "title": "File Transfer Operations",
+  "description": "Operational dashboard for monitoring file transfer health, issues, and SLA metrics",
+  "tags": ["file-transfer", "operator", "adx"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Recent File Transfers",
+      "description": "Latest status of each monitored file in the selected time window",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-text" }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "OK": { "color": "green", "text": "OK" }, "MISSING": { "color": "red", "text": "MISSING" }, "DELAYED": { "color": "orange", "text": "DELAYED" }, "ERROR": { "color": "dark-red", "text": "ERROR" } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "AgeMinutes" },
+            "properties": [
+              { "id": "unit", "value": "m" },
+              { "id": "decimals", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| summarize arg_max(Timestamp, *) by Filename\n| project Filename, Status, AgeMinutes, SourcePresent, TargetPresent,\n          SourceLastModifiedUtc, TargetLastModifiedUtc, Timestamp, Notes\n| order by Status asc, Filename asc",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Current Issues",
+      "description": "Files currently in MISSING or DELAYED state",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-text" }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "MISSING": { "color": "red", "text": "MISSING" }, "DELAYED": { "color": "orange", "text": "DELAYED" } } }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| where Status in (\"MISSING\", \"DELAYED\")\n| summarize arg_max(Timestamp, *) by Filename\n| project Filename, Status, AgeMinutes, SourceLastModifiedUtc, Timestamp, Notes\n| order by Status asc, AgeMinutes desc",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Files Processed",
+      "description": "Total files processed in the selected time window",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 18 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| summarize FilesProcessed = dcount(Filename)",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Missing Files",
+      "description": "Count of files with MISSING status in the selected time window",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 18 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| where Status == \"MISSING\"\n| summarize MissingCount = dcount(Filename)",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Missing & Failed Counts",
+      "description": "Count of MISSING and ERROR events per time bin",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Count",
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "MissingCount" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "ErrorCount" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "dark-red", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| where Status in (\"MISSING\", \"ERROR\")\n| summarize\n    MissingCount = countif(Status == \"MISSING\"),\n    ErrorCount   = countif(Status == \"ERROR\")\n  by bin(Timestamp, $__interval)\n| order by Timestamp asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "SLA & Delay Metrics",
+      "description": "Average and P95 file age over time with adaptive binning",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 30 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Minutes",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none", "group": "A" }
+          },
+          "unit": "m"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "AvgAgeMinutes" },
+            "properties": [
+              { "id": "displayName", "value": "Avg Age" },
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "P95AgeMinutes" },
+            "properties": [
+              { "id": "displayName", "value": "P95 Age" },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| summarize\n    AvgAgeMinutes = avg(AgeMinutes),\n    P95AgeMinutes = percentile(AgeMinutes, 95)\n  by bin(Timestamp, $__interval)\n| order by Timestamp asc",
+          "resultFormat": "time_series",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "SLA Adherence Rate",
+      "description": "Percentage of OK events in the selected time window",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 18 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents\n| where $__timeFilter(Timestamp)\n| summarize\n    TotalCount = count(),\n    OkCount    = countif(Status == \"OK\")\n| extend SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)\n| project SlaAdherencePct",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Ingestion Errors",
+      "description": "Recent dead-letter rows from the errors table showing raw data and failure reason",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 38 },
+      "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Error" },
+            "properties": [
+              { "id": "custom.width", "value": 400 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "RawData" },
+            "properties": [
+              { "id": "custom.width", "value": 300 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-data-explorer-datasource", "uid": "${DS_AZURE_DATA_EXPLORER}" },
+          "query": "FileTransferEvents_Errors\n| where $__timeFilter(FailedOn)\n| project FailedOn, Error, RawData, OperationId\n| order by FailedOn desc\n| take 100",
+          "resultFormat": "table",
+          "querySource": "raw"
+        }
+      ]
+    }
+  ],
+  "alertRules": [
+    {
+      "title": "FileTransfer-MissingFiles",
+      "ruleGroup": "file-transfer-alerts",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "{{ $value }} MISSING file events detected in the last hour",
+        "description": "Alert fires when more than 3 files are reported as MISSING within a 1-hour window. Check the Operator Dashboard for details."
+      },
+      "labels": {
+        "alert_type": "business",
+        "severity": "warning"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "${DS_AZURE_DATA_EXPLORER}",
+          "queryType": "",
+          "model": {
+            "query": "FileTransferEvents\n| where Timestamp >= ago(1h)\n| where Status == \"MISSING\"\n| summarize MissingCount = count()",
+            "resultFormat": "table"
+          },
+          "relativeTimeRange": { "from": 3600, "to": 0 }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [0] } }]
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [3] } }]
+          }
+        }
+      ]
+    },
+    {
+      "title": "FileTransfer-IngestionErrors",
+      "ruleGroup": "file-transfer-alerts",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "{{ $value }} ingestion error(s) detected in the last 10 minutes",
+        "description": "Malformed rows failed ingestion mapping validation and were routed to the dead-letter table. Check FileTransferEvents_Errors for details."
+      },
+      "labels": {
+        "alert_type": "infrastructure",
+        "severity": "critical"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "${DS_AZURE_DATA_EXPLORER}",
+          "queryType": "",
+          "model": {
+            "query": "FileTransferEvents_Errors\n| where FailedOn >= ago(10m)\n| summarize ErrorCount = count()",
+            "resultFormat": "table"
+          },
+          "relativeTimeRange": { "from": 600, "to": 0 }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [0] } }]
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [0] } }]
+          }
+        }
+      ]
+    },
+    {
+      "title": "FileTransfer-DelayedFiles",
+      "ruleGroup": "file-transfer-alerts",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "{{ $value }} DELAYED file events detected in the last hour",
+        "description": "Alert fires when more than 5 files are reported as DELAYED (exceeding SLA threshold) within a 1-hour window. Check the Operator Dashboard for details."
+      },
+      "labels": {
+        "alert_type": "business",
+        "severity": "warning"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "${DS_AZURE_DATA_EXPLORER}",
+          "queryType": "",
+          "model": {
+            "query": "FileTransferEvents\n| where Timestamp >= ago(1h)\n| where Status == \"DELAYED\"\n| summarize DelayedCount = count()",
+            "resultFormat": "table"
+          },
+          "relativeTimeRange": { "from": 3600, "to": 0 }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [0] } }]
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "-100",
+          "queryType": "",
+          "model": {
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [{ "evaluator": { "type": "gt", "params": [5] } }]
+          }
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}

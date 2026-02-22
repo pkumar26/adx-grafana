@@ -1,0 +1,40 @@
+// =============================================================================
+// ADX Table DDL — File Transfer Analytics
+// Execute in order: Step 1 (target), Step 2 (staging), Step 3 (dead-letter)
+// All commands are idempotent (.create-merge).
+// =============================================================================
+
+// Step 1: Target Table — system of record for file-transfer health events
+.create-merge table FileTransferEvents (
+    Filename: string,
+    SourcePresent: bool,
+    TargetPresent: bool,
+    SourceLastModifiedUtc: datetime,
+    TargetLastModifiedUtc: datetime,
+    AgeMinutes: real,
+    Status: string,
+    Notes: string,
+    Timestamp: datetime
+)
+
+// Step 2: Staging Table — receives raw ingestion from Event Grid data connection
+.create-merge table FileTransferEvents_Raw (
+    Filename: string,
+    SourcePresent: bool,
+    TargetPresent: bool,
+    SourceLastModifiedUtc: datetime,
+    TargetLastModifiedUtc: datetime,
+    AgeMinutes: real,
+    Status: string,
+    Notes: string
+)
+
+// Step 3: Dead-Letter Table — captures rows that fail ingestion mapping validation
+.create-merge table FileTransferEvents_Errors (
+    RawData: string,
+    Database: string,
+    ['Table']: string,
+    FailedOn: datetime,
+    Error: string,
+    OperationId: guid
+)

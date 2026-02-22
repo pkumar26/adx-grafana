@@ -1,0 +1,11 @@
+// Missing & Failed Counts (FR-013, FR-019)
+// Panel Type: Time series (bar chart) | Format as: Time series
+// Dashboard: Operator Dashboard — Panel 3
+FileTransferEvents
+| where $__timeFilter(Timestamp)
+| where Status in ("MISSING", "ERROR")
+| summarize
+    MissingCount = countif(Status == "MISSING"),
+    ErrorCount   = countif(Status == "ERROR")
+  by bin(Timestamp, $__interval)
+| order by Timestamp asc

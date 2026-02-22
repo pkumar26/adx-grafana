@@ -1,0 +1,38 @@
+// Volume & Business KPIs — from DailySummary materialized view (FR-014, FR-020)
+// Dashboard: Business Analytics Dashboard — Panels 6–9
+// Uses materialized_view("DailySummary") for consistent long-term reporting.
+
+// Panel 6: Daily volume by status
+// Type: Time series (multi-line) | Format as: Time series
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, TotalCount, OkCount, MissingCount, DelayedCount
+| order by Date asc
+
+// ---
+
+// Panel 7: Daily SLA Adherence Trend
+// Type: Time series (line chart) | Format as: Time series
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| extend SlaAdherencePct = round(100.0 * OkCount / TotalCount, 2)
+| project Date, SlaAdherencePct
+| order by Date asc
+
+// ---
+
+// Panel 8: Daily P95 Age Trend (from tdigest sketch)
+// Type: Time series (line chart) | Format as: Time series
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, P95AgeMinutes = percentile_tdigest(AgeDigest, 95)
+| order by Date asc
+
+// ---
+
+// Panel 9: Average Age Trend
+// Type: Time series (line chart) | Format as: Time series
+materialized_view("DailySummary")
+| where $__timeFilter(Date)
+| project Date, AvgAgeMinutes
+| order by Date asc

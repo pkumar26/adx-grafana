@@ -1,0 +1,4 @@
+azure-kusto-data>=4.4.0
+azure-kusto-ingest>=4.4.0
+azure-identity>=1.16.0
+certifi>=2023.0.0

@@ -1,0 +1,189 @@
+# ADX Schema Contract
+
+> Defines the complete DDL for all tables, functions, policies, mappings, and materialized views.
+> Execute in order (Step 1–13) against a clean or existing ADX database. All commands are idempotent.
+
+**Branch**: `001-adx-file-transfer-analytics` | **Spec**: [../spec.md](../spec.md) | **Data Model**: [../data-model.md](../data-model.md)
+
+---
+
+## Step 1: Target Table
+
+```kql
+.create-merge table FileTransferEvents (
+    Filename: string,
+    SourcePresent: bool,
+    TargetPresent: bool,
+    SourceLastModifiedUtc: datetime,
+    TargetLastModifiedUtc: datetime,
+    AgeMinutes: real,
+    Status: string,
+    Notes: string,
+    Timestamp: datetime
+)
+```
+
+## Step 2: Staging Table
+
+```kql
+.create-merge table FileTransferEvents_Raw (
+    Filename: string,
+    SourcePresent: bool,
+    TargetPresent: bool,
+    SourceLastModifiedUtc: datetime,
+    TargetLastModifiedUtc: datetime,
+    AgeMinutes: real,
+    Status: string,
+    Notes: string
+)
+```
+
+## Step 3: Dead-Letter Table
+
+```kql
+.create-merge table FileTransferEvents_Errors (
+    RawData: string,
+    Database: string,
+    ['Table']: string,
+    FailedOn: datetime,
+    Error: string,
+    OperationId: guid
+)
+```
+
+## Step 4: Transformation Function
+
+```kql
+.create-or-alter function FileTransferEvents_Transform() {
+    FileTransferEvents_Raw
+    | extend Timestamp = coalesce(SourceLastModifiedUtc, ingestion_time())
+    | project Filename, SourcePresent, TargetPresent,
+              SourceLastModifiedUtc, TargetLastModifiedUtc,
+              AgeMinutes, Status, Notes, Timestamp
+}
+```
+
+## Step 5: Update Policy
+
+```kql
+.alter table FileTransferEvents policy update
+@'[{"IsEnabled": true, "Source": "FileTransferEvents_Raw", "Query": "FileTransferEvents_Transform()", "IsTransactional": true, "PropagateIngestionProperties": true}]'
+```
+
+## Step 6: CSV Ingestion Mapping
+
+```kql
+.create-or-alter table FileTransferEvents_Raw ingestion csv mapping 'FileTransferEvents_CsvMapping'
+'[
+    {"Name": "Filename",              "DataType": "string",   "Ordinal": 0},
+    {"Name": "SourcePresent",          "DataType": "bool",     "Ordinal": 1},
+    {"Name": "TargetPresent",          "DataType": "bool",     "Ordinal": 2},
+    {"Name": "SourceLastModifiedUtc",  "DataType": "datetime", "Ordinal": 3},
+    {"Name": "TargetLastModifiedUtc",  "DataType": "datetime", "Ordinal": 4},
+    {"Name": "AgeMinutes",             "DataType": "real",     "Ordinal": 5},
+    {"Name": "Status",                 "DataType": "string",   "Ordinal": 6},
+    {"Name": "Notes",                  "DataType": "string",   "Ordinal": 7}
+]'
+```
+
+## Step 7: JSON Ingestion Mapping
+
+```kql
+.create-or-alter table FileTransferEvents_Raw ingestion json mapping 'FileTransferEvents_JsonMapping'
+'[
+    {"column": "Filename",              "path": "$.Filename",              "datatype": "string"},
+    {"column": "SourcePresent",          "path": "$.SourcePresent",          "datatype": "bool"},
+    {"column": "TargetPresent",          "path": "$.TargetPresent",          "datatype": "bool"},
+    {"column": "SourceLastModifiedUtc",  "path": "$.SourceLastModifiedUtc",  "datatype": "datetime"},
+    {"column": "TargetLastModifiedUtc",  "path": "$.TargetLastModifiedUtc",  "datatype": "datetime"},
+    {"column": "AgeMinutes",             "path": "$.AgeMinutes",             "datatype": "real"},
+    {"column": "Status",                 "path": "$.Status",                 "datatype": "string"},
+    {"column": "Notes",                  "path": "$.Notes",                  "datatype": "string"}
+]'
+```
+
+## Step 8: Target Table Retention (environment-specific)
+
+```kql
+// Production: 90 days
+.alter table FileTransferEvents policy retention
+@'{"SoftDeletePeriod": "90.00:00:00", "Recoverability": "Enabled"}'
+
+// Non-production: 30 days
+// .alter table FileTransferEvents policy retention
+// @'{"SoftDeletePeriod": "30.00:00:00", "Recoverability": "Disabled"}'
+```
+
+## Step 9: Staging Table Retention
+
+```kql
+.alter table FileTransferEvents_Raw policy retention
+@'{"SoftDeletePeriod": "1.00:00:00", "Recoverability": "Disabled"}'
+```
+
+## Step 10: Dead-Letter Table Retention
+
+```kql
+.alter table FileTransferEvents_Errors policy retention
+@'{"SoftDeletePeriod": "30.00:00:00", "Recoverability": "Disabled"}'
+```
+
+## Step 11: Ingestion Batching (staging table)
+
+```kql
+.alter table FileTransferEvents_Raw policy ingestionbatching
+@'{"MaximumBatchingTimeSpan": "00:01:00", "MaximumNumberOfItems": 20, "MaximumRawDataSizeMB": 256}'
+```
+
+## Step 12: Materialized View
+
+```kql
+.create ifnotexists materialized-view DailySummary on table FileTransferEvents {
+    FileTransferEvents
+    | summarize
+        TotalCount      = count(),
+        OkCount         = countif(Status == "OK"),
+        MissingCount    = countif(Status == "MISSING"),
+        DelayedCount    = countif(Status == "DELAYED"),
+        AvgAgeMinutes   = avg(AgeMinutes),
+        AgeDigest       = tdigest(AgeMinutes)
+        // SlaAdherencePct is computed at query time: round(100.0 * OkCount / TotalCount, 2)
+    by Date = startofday(Timestamp)
+}
+```
+
+## Step 13: Materialized View Retention
+
+```kql
+.alter materialized-view DailySummary policy retention
+@'{"SoftDeletePeriod": "730.00:00:00", "Recoverability": "Enabled"}'
+```
+
+---
+
+## Verification Queries
+
+After executing all steps, verify the schema:
+
+```kql
+// Tables exist with correct columns
+.show table FileTransferEvents schema as json
+.show table FileTransferEvents_Raw schema as json
+.show table FileTransferEvents_Errors schema as json
+
+// Update policy is attached
+.show table FileTransferEvents policy update
+
+// Ingestion mappings exist
+.show table FileTransferEvents_Raw ingestion csv mappings
+.show table FileTransferEvents_Raw ingestion json mappings
+
+// Materialized view is healthy
+.show materialized-view DailySummary
+
+// Retention policies
+.show table FileTransferEvents policy retention
+.show table FileTransferEvents_Raw policy retention
+.show table FileTransferEvents_Errors policy retention
+.show materialized-view DailySummary policy retention
+```
