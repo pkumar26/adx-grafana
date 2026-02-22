@@ -180,7 +180,8 @@ module eventGrid 'modules/event-grid.bicep' = if (enableEventGrid) {
     tags: allTags
   }
   dependsOn: [
-    adxSchema // Schema must exist before data connection (table + mapping validation)
+    adxSchema  // Schema must exist before data connection (table + mapping validation)
+    identity   // ADX MI must have Storage Blob Data Reader before data connection can ingest
   ]
 }
 
@@ -208,26 +209,10 @@ module identity 'modules/identity.bicep' = {
     adxClusterName: adxClusterName
     adxDatabaseName: adxDatabaseName
     storageAccountId: storage.outputs.storageAccountId
+    storageAccountName: storageAccountName
     grafanaName: grafanaName
     deployerPrincipalId: deployerPrincipalId
   }
-}
-
-// --- Module: Grafana Configuration (data source + dashboards via deployment script) ---
-
-module grafanaConfig 'modules/grafana-config.bicep' = {
-  name: 'deploy-grafana-config'
-  params: {
-    grafanaName: grafanaName
-    adxClusterUri: adxCluster.outputs.clusterUri
-    adxDatabaseName: adxDatabaseName
-    location: location
-    tags: allTags
-  }
-  dependsOn: [
-    grafana
-    identity // Grafana MI needs ADX Viewer before data source can query
-  ]
 }
 
 // --- Module: Networking (Private Endpoints) ---
@@ -271,5 +256,5 @@ output usedExistingGrafana bool = useExistingGrafana
 @description('Whether Event Grid + Event Hub were provisioned')
 output eventGridEnabled bool = enableEventGrid
 
-@description('Grafana ADX data source UID')
-output grafanaDataSourceUid string = grafanaConfig.outputs.dataSourceUid
+@description('Grafana instance name (used by deploy.sh for post-deployment configuration)')
+output grafanaName string = grafanaName

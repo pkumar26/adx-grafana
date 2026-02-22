@@ -1,7 +1,8 @@
 using '../main.bicep'
 
 // Prod environment parameters
-// Deploy: az deployment group create -g rg-file-transfer-prod --template-file infra/main.bicep --parameters infra/parameters/prod.bicepparam
+// Deploy:  ./deploy.sh prod
+// Manual:  az group create -n rg-file-transfer-prod -l eastus2 && az deployment group create -g rg-file-transfer-prod --template-file infra/main.bicep --parameters infra/parameters/prod.bicepparam
 
 param environmentName = 'prod'
 param location = 'eastus2'

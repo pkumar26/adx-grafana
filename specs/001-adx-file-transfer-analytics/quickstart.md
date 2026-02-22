@@ -12,15 +12,33 @@
 | Azure CLI | `az` ≥ 2.55+ with `kusto` extension installed |
 | Bicep CLI | `az bicep install` (or bundled with Azure CLI) |
 | Python | 3.9+ for the runbook |
-| Resource group | Pre-created: e.g., `rg-file-transfer-dev` |
+| Resource group | Created automatically by `deploy.sh`, or pre-create: `az group create -n rg-file-transfer-dev -l eastus2` |
 
 ---
 
 ## Step 1: Deploy Infrastructure (Bicep)
 
-### Option A: Provision new resources
+### Option A: Provision new resources (recommended)
+
+The interactive deploy script handles resource group creation, environment selection, and deployer identity:
 
 ```bash
+./deploy.sh
+```
+
+Or non-interactively:
+
+```bash
+./deploy.sh dev                # Prompts for resource group
+./deploy.sh dev my-rg          # Fully non-interactive
+```
+
+### Option A (manual): Provision new resources
+
+```bash
+# Create the resource group first (if it doesn't exist)
+az group create --name rg-file-transfer-dev --location eastus2
+
 # Get your Azure AD Object ID (grants Grafana Admin portal access)
 DEPLOYER_ID=$(az ad signed-in-user show --query id -o tsv)
 
@@ -39,14 +57,16 @@ az deployment group create \
   --parameters deployerPrincipalId="$DEPLOYER_ID"
 ```
 
-This single command provisions the complete end-to-end pipeline:
+This single command provisions the infrastructure:
 - ADX cluster (Dev/Test SKU) + database (`ftevents_dev`)
 - **ADX schema**: tables, mappings, policies, and materialized views (via Kusto database script)
 - Storage account with `file-transfer-events` container + lifecycle policy
 - Event Grid → Event Hub → ADX data connection (automatic blob ingestion)
-- Managed Grafana instance with **ADX data source** and **both dashboards** auto-imported
+- Managed Grafana instance (provisioned with RBAC, but **not yet configured** with data source/dashboards)
 - All RBAC: Grafana→ADX Viewer, ADX→Storage Blob Reader/Contributor, deployer Grafana Admin
 - Private endpoints (if enabled for the environment)
+
+> **Important**: Manual `az deployment group create` deploys infrastructure only. You must configure Grafana (data source + dashboards) as a separate step — see [Step 5](#step-5-configure-grafana-dashboards). If you use `./deploy.sh` (Option A), this is handled automatically.
 
 > **`deployerPrincipalId`** is optional — omit it for CI/CD pipelines that don't need Grafana portal access.
 
@@ -175,11 +195,56 @@ az kusto query \
 
 ---
 
-## Step 5: Grafana Dashboards (automatic)
+## Step 5: Configure Grafana Dashboards
 
-The Bicep deployment in Step 1 **automatically configures Grafana** via a [deployment script](../../infra/modules/grafana-config.bicep):
-- Creates an ADX data source with managed identity authentication
-- Imports both dashboards (`operator-dashboard.json` and `business-dashboard.json`) with the data source pre-configured
+If you used `./deploy.sh`, the data source and dashboards are already configured — skip to viewing.
+
+If you deployed manually via `az deployment group create`, you need to configure Grafana as a post-deployment step:
+
+```bash
+# Install the Managed Grafana CLI extension
+az extension add --name amg --yes
+
+# Get deployment outputs
+GRAFANA_NAME=$(az deployment group show \
+  --resource-group rg-file-transfer-dev --name main \
+  --query "properties.outputs.grafanaName.value" -o tsv)
+ADX_URI=$(az deployment group show \
+  --resource-group rg-file-transfer-dev --name main \
+  --query "properties.outputs.adxClusterUri.value" -o tsv)
+ADX_DB=$(az deployment group show \
+  --resource-group rg-file-transfer-dev --name main \
+  --query "properties.outputs.adxDatabaseName.value" -o tsv)
+
+# Create ADX data source in Grafana (managed identity auth)
+DS_UID=$(az grafana data-source create --name "$GRAFANA_NAME" --definition '{
+  "name": "Azure Data Explorer - '"$ADX_DB"'",
+  "type": "grafana-azure-data-explorer-datasource",
+  "access": "proxy",
+  "jsonData": {
+    "azureCredentials": {"authType": "msi"},
+    "clusterUrl": "'"$ADX_URI"'",
+    "defaultDatabase": "'"$ADX_DB"'"
+  }
+}' --query uid -o tsv)
+
+echo "Data source UID: $DS_UID"
+
+# Prepare and import dashboards (replace placeholder with actual data source UID)
+for DASH in dashboards/operator-dashboard.json dashboards/business-dashboard.json; do
+  python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    dash = json.load(f)
+raw = json.dumps(dash).replace('\${DS_AZURE_DATA_EXPLORER}', sys.argv[2])
+dash = json.loads(raw)
+dash.pop('__inputs', None); dash.pop('__requires', None)
+with open('/tmp/gf-import.json', 'w') as f:
+    json.dump({'dashboard': dash, 'overwrite': True}, f)
+" "$DASH" "$DS_UID"
+  az grafana dashboard create --name "$GRAFANA_NAME" --definition @/tmp/gf-import.json --overwrite
+done
+```
 
 Open the Grafana endpoint (from the deployment output `grafanaEndpoint`) and navigate to **Dashboards** — both "File Transfer Operations" and "File Transfer Business Analytics" will be ready.
 
