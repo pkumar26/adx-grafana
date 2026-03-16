@@ -1,8 +1,26 @@
 # ADX File-Transfer Analytics
 
+[![License: MIT](https://img.shields.io/github/license/pkumar26/adx-grafana)](LICENSE)
+[![Azure](https://img.shields.io/badge/Azure-0078D4?logo=microsoftazure&logoColor=white)](https://azure.microsoft.com)
+[![Azure Data Explorer](https://img.shields.io/badge/Azure%20Data%20Explorer-0078D4?logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/data-explorer/)
+[![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://grafana.com)
+[![Bicep](https://img.shields.io/badge/Bicep-0078D4?logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/pkumar26/adx-grafana/pulls)
+
+[![GitHub Stars](https://img.shields.io/github/stars/pkumar26/adx-grafana?style=social)](https://github.com/pkumar26/adx-grafana/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/pkumar26/adx-grafana?style=social)](https://github.com/pkumar26/adx-grafana/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/pkumar26/adx-grafana)](https://github.com/pkumar26/adx-grafana/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/pkumar26/adx-grafana)](https://github.com/pkumar26/adx-grafana/commits/main)
+[![Repo Size](https://img.shields.io/github/repo-size/pkumar26/adx-grafana)](https://github.com/pkumar26/adx-grafana)
+
 Ingest CSV/JSON file-transfer health data into Azure Data Explorer (ADX), visualize operational and business metrics in Azure Managed Grafana, and alert on missing files and ingestion errors — all deployed via Bicep IaC with managed identity authentication.
 
 ## Architecture
+
+![Azure](https://img.shields.io/badge/Azure-0078D4?logo=microsoftazure&logoColor=white)
+![Azure Data Explorer](https://img.shields.io/badge/Azure%20Data%20Explorer-0078D4?logo=microsoftazure&logoColor=white)
+![Event Grid](https://img.shields.io/badge/Event%20Grid-0078D4?logo=microsoftazure&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
 
 ```
 ┌──────────────┐     blob upload     ┌──────────────────┐
@@ -101,6 +119,10 @@ samples/                        # Test data
 
 ### 1. Deploy Infrastructure
 
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?logo=microsoftazure&logoColor=white)
+![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=white)
+![Bicep](https://img.shields.io/badge/Bicep-0078D4?logo=microsoftazure&logoColor=white)
+
 **Recommended — interactive script:**
 
 ```bash
@@ -191,6 +213,9 @@ See [Using Existing Resources](#using-existing-resources) below for details on f
 
 ### 2. Apply ADX Schema (automatic)
 
+![KQL](https://img.shields.io/badge/KQL-0078D4?logo=microsoftazure&logoColor=white)
+![Bicep](https://img.shields.io/badge/Bicep-0078D4?logo=microsoftazure&logoColor=white)
+
 The Bicep deployment now applies the full ADX schema automatically via a [Kusto database script](infra/modules/adx-schema.bicep) that loads all KQL files from `kql/schema/`. No manual step needed.
 
 > **Manual alternative** (for existing clusters or troubleshooting):
@@ -204,6 +229,8 @@ The Bicep deployment now applies the full ADX schema automatically via a [Kusto 
 > ```
 
 ### 3. Ingest Sample Data
+
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
 
 ```bash
 python adx_runbook.py ingest-local \
@@ -223,6 +250,9 @@ python adx_runbook.py verify \
 ```
 
 ### 5. Configure Grafana Dashboards
+
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?logo=microsoftazure&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
 
 If you used `./deploy.sh`, the data source and dashboards are already configured — skip to viewing.
 
@@ -289,6 +319,8 @@ For the full walkthrough, see [quickstart.md](specs/001-adx-file-transfer-analyt
 
 ## Using Existing Resources
 
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?logo=microsoftazure&logoColor=white)
+
 The deployment supports reusing an existing ADX cluster and/or Grafana instance instead of provisioning new ones. This is useful when you already have shared infrastructure or want to add the file-transfer analytics pipeline to an existing setup.
 
 ### Finding Required Values
@@ -351,6 +383,9 @@ az deployment group create \
 This avoids provisioning the Event Hub namespace, Event Grid system topic, event subscription, and ADX data connection — reducing cost and deployment time. You can always enable it later by re-deploying with `enableEventGrid=true`.
 
 ## Key Design Decisions
+
+![Managed Identity](https://img.shields.io/badge/Managed%20Identity-0078D4?logo=microsoftazure&logoColor=white)
+![Security](https://img.shields.io/badge/Security-4B0082?logo=springsecurity&logoColor=white)
 
 - **Staging table + update policy**: `Timestamp` is derived at ingestion time via `coalesce(SourceLastModifiedUtc, ingestion_time())`, not at query time. All downstream queries use the concrete column.
 - **Materialized view with tdigest**: `DailySummary` pre-aggregates daily metrics with a 730-day retention independent of the 90-day source table. P95 latency uses `tdigest()` / `percentile_tdigest()` since `percentile()` is not supported in materialized views.
